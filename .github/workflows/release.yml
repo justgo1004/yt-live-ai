@@ -1,17 +1,19 @@
-# GitHub 릴리스(태그 v1.2.3)를 발행하면 윈도우 서버에서 exe 를 만들어 그 릴리스에 올린다.
-# 앱은 이 릴리스를 보고 자동 업데이트한다 (updater.py). exe 가 올라오기 전까지 앱은 업데이트를 표시하지 않는다.
+# version.py 의 버전을 올려 main 에 push 하면:
+#   윈도우 서버에서 exe 빌드 → 실행 시험 → GitHub 릴리스 v<버전> 발행 (exe, 체크섬, ffmpeg 포함 zip)
+# 앱은 이 릴리스를 보고 자동 업데이트한다 (updater.py). 이미 발행된 버전이면 아무것도 하지 않는다.
 name: Release (Windows exe)
 
 on:
-  release:
-    types: [published]
-  workflow_dispatch:      # 수동 실행: 빌드·시험만 하고 릴리스에는 올리지 않음
+  push:
+    branches: [main]
+    paths: ["version.py"]
+  workflow_dispatch:      # 수동 실행: 빌드·시험만 하고 릴리스는 발행하지 않음
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
 jobs:
@@ -26,20 +28,28 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: 태그 이름으로 버전 기록
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: pwsh
+      - name: 버전 확인 (이미 발행된 버전인지)
+        id: ver
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          $v = "${{ github.ref_name }}".TrimStart("v")
-          (Get-Content version.py -Raw) -replace '__version__ = ".*"', "__version__ = `"$v`"" | Set-Content version.py -NoNewline
-          Get-Content version.py
+          v=$(python -c "import version; print(version.__version__)")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if gh release view "v$v" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"; echo "v$v 은(는) 이미 발행되어 건너뜁니다."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"; echo "v$v 을(를) 빌드합니다."
+          fi
 
       - name: 패키지 설치
+        if: steps.ver.outputs.exists == 'false'
         run: |
           python -m pip install -U pip
           pip install -r requirements.txt pyinstaller
 
       - name: exe 빌드
+        if: steps.ver.outputs.exists == 'false'
         run: >
           pyinstaller --noconfirm --clean --onefile --windowed --name YouTubeLiveAI
           --add-data "ui;ui" --collect-submodules deepgram
@@ -48,6 +58,7 @@ jobs:
           app.py
 
       - name: 실행 시험 (exe 가 뜨고 화면 서버가 응답하는지)
+        if: steps.ver.outputs.exists == 'false'
         shell: pwsh
         run: |
           $env:LIVEAI_NO_BROWSER = "1"; $env:LIVEAI_PORT = "8790"
@@ -63,9 +74,11 @@ jobs:
           Start-Sleep 4
           if (-not $p.HasExited) { Stop-Process $p -Force }
           if (-not $ok) { Get-ChildItem smoke\logs -ErrorAction SilentlyContinue | Get-Content; throw "exe 실행 시험 실패" }
+          if ($r.update.current -ne "${{ steps.ver.outputs.version }}") { throw "exe 버전($($r.update.current))이 version.py 와 다릅니다" }
           Write-Host "실행 시험 통과 - 버전 $($r.update.current)"
 
       - name: ffmpeg 포함 전체 패키지 + 체크섬
+        if: steps.ver.outputs.exists == 'false'
         shell: pwsh
         run: |
           $ProgressPreference = "SilentlyContinue"
@@ -78,11 +91,13 @@ jobs:
           $h = (Get-FileHash dist\YouTubeLiveAI.exe -Algorithm SHA256).Hash.ToLower()
           Set-Content dist\YouTubeLiveAI.exe.sha256 "$h  YouTubeLiveAI.exe" -NoNewline -Encoding ascii
 
-      - name: 릴리스 올리기
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: 릴리스 발행
+        if: steps.ver.outputs.exists == 'false' && github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
-          name: ${{ github.ref_name }}
+          tag_name: v${{ steps.ver.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: v${{ steps.ver.outputs.version }}
           body_path: RELEASE_NOTES.md
           files: |
             dist/YouTubeLiveAI.exe
@@ -90,7 +105,7 @@ jobs:
             YouTubeLiveAI_full.zip
 
       - name: 시험 빌드 결과 보관 (수동 실행 시)
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        if: steps.ver.outputs.exists == 'false' && github.event_name != 'push'
         uses: actions/upload-artifact@v4
         with:
           name: YouTubeLiveAI-test

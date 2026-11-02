@@ -61,12 +61,13 @@
 ### 새 버전 내기 (개발자용)
 
 ```bash
-# 1) version.py 와 RELEASE_NOTES.md 수정 (변경 내용은 앱의 업데이트 알림에 그대로 표시됨) → main 에 push
-# 2) GitHub 에서 릴리스 발행 (태그 v1.2.0) → GitHub Actions 가 윈도우에서 exe 를 빌드·시험해 그 릴리스에 올림 (약 10분)
-gh release create v1.2.0 --target main --title v1.2.0 --notes-file RELEASE_NOTES.md
+# version.py 의 __version__ 을 올리고 RELEASE_NOTES.md 에 변경 내용을 쓴 뒤 main 에 push 하면 끝.
+# → GitHub Actions 가 윈도우에서 exe 를 빌드·실행 시험하고 릴리스 v<버전> 을 발행 (약 10분)
+# → 사용자 앱에 "새 버전이 있습니다" 알림 (변경 내용 = RELEASE_NOTES.md)
+git commit -am "v1.2.0: 변경 요약" && git push origin main
 ```
 
-빌드 과정은 `.github/workflows/release.yml`에 있습니다. 릴리스 태그 이름이 그대로 앱 버전(`version.py`)이 됩니다.
+빌드 과정은 `.github/workflows/release.yml`에 있습니다. 이미 발행된 버전이면 다시 빌드하지 않습니다.
 
 ## 🎤 음성 명령 (나이트봇 명령어를 목소리로)
 
