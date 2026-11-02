@@ -102,6 +102,13 @@ class Settings(BaseSettings):
     command_label: str = ""             # 명령 메시지 앞 표기 (선택, 예: "📢 ")
     command_max_per_day: int = Field(100, ge=1, le=150)
 
+    # --- 여러 봇 · 이벤트 · 참여 유도 ---
+    bots_file: str = "bots.json"
+    community_enabled: bool = True
+    community_file: str = "community.json"
+    community_state_file: str = ".community_state.json"
+    quota_file: str = ".quota.json"
+
     @field_validator("groq_api_key", "deepgram_api_key", "anthropic_api_key", mode="after")
     @classmethod
     def _no_comment_as_key(cls, v: Optional[SecretStr]) -> Optional[SecretStr]:
@@ -154,6 +161,14 @@ class Orchestrator:
         self.engine = None        # reaction.ReactionEngine
         self.publisher = None     # chat_sender.SafeChatPublisher
         self.commands = None      # commands.CommandRunner
+        self.registry = None      # bots.BotRegistry
+        self.publishers: dict = {}    # 봇 id → SafeChatPublisher
+        self.role_pub: dict = {}      # 역할 → SafeChatPublisher
+        self.reader = None        # chat_reader.ChatReader
+        self._reader_api = None   # 읽기 전용으로 따로 연 연결 (화면 모드)
+        self.community = None     # community.CommunityHub
+        self.quota = None
+        self._send_tasks: set = set()
         self.vocab_hint = ""
         self.pipeline: Optional[asyncio.Task] = None
         self._run_task: Optional[asyncio.Task] = None
@@ -176,24 +191,115 @@ class Orchestrator:
         return cfg
 
     async def _start_chat(self) -> None:
-        """채팅 전송기 (리액션·음성 명령이 함께 사용). 실패하면 전송만 끄고 나머지는 계속."""
+        """봇 계정별 채팅 전송기. 역할(소통/안내/이벤트/참여 유도)마다 맡은 봇의 전송기를 연결한다.
+        로그인이 안 됐거나 연결에 실패한 봇은 건너뛰고 나머지는 계속."""
         s = self.s
         if s.chat_sender == "off":
             return
+        from bots import ROLES, BotRegistry
         from chat_sender import ChatPolicy, ConsoleSender, SafeChatPublisher, YouTubeApiSender
-        policy = ChatPolicy(cooldown_min=s.chat_cooldown_min, cooldown_max=s.chat_cooldown_max,
-                            max_per_stream=s.chat_max_per_stream, max_per_day=s.chat_max_per_day,
-                            label=s.chat_label, state_file=s.chat_state_file)
-        if s.chat_sender == "console":
-            sender = ConsoleSender()
-        else:
-            video = s.chat_video_id or self.args.url
-            if not video:
-                raise SystemExit("youtube-api 전송에는 유튜브 URL 또는 CHAT_VIDEO_ID 가 필요합니다")
-            sender = YouTubeApiSender(video, s.yt_client_secret, s.yt_token_file)
-        self.publisher = SafeChatPublisher(sender, policy)
-        if not await self.publisher.start():
-            self.publisher = None
+        import quota as Q
+        reg = self.registry = BotRegistry.load(s.bots_file, s.yt_client_secret, s.yt_token_file, s.chat_label)
+        base = reg.base
+        self.quota = Q.meter(s.quota_file)
+        real = s.chat_sender == "youtube-api"
+        video = s.chat_video_id or self.args.url
+
+        def policy(label: str, state: str) -> ChatPolicy:
+            return ChatPolicy(cooldown_min=s.chat_cooldown_min, cooldown_max=s.chat_cooldown_max,
+                              max_per_stream=s.chat_max_per_stream, max_per_day=s.chat_max_per_day,
+                              label=label, state_file=state)
+
+        bots = [b for b in reg.bots if b.enabled and b.roles]
+        if not bots and not real:            # 봇을 아직 안 만든 경우: 화면 모드용 가상 봇 하나가 모든 역할
+            pub = SafeChatPublisher(ConsoleSender("봇"), policy(s.chat_label, s.chat_state_file), bot_name="봇")
+            if await pub.start():
+                self.publishers["default"] = pub
+                self.role_pub = {r: pub for r in ROLES}
+        for b in bots:
+            b.state_path(base).parent.mkdir(parents=True, exist_ok=True)
+            if real:
+                if not b.ready(base):
+                    log.warning("[%s] 로그인되지 않아 이번 방송에서는 쓰지 않습니다 ([봇 관리]에서 로그인)", b.name)
+                    continue
+                if not video:
+                    raise SystemExit("youtube-api 전송에는 유튜브 URL 또는 CHAT_VIDEO_ID 가 필요합니다")
+                sender = YouTubeApiSender(video, str(b.cs_path(base)), str(b.token_path(base)), quota=self.quota)
+            else:
+                sender = ConsoleSender(b.name)
+            pub = SafeChatPublisher(sender, policy(b.label, str(b.state_path(base))), bot_name=b.name)
+            if await pub.start():
+                self.publishers[b.id] = pub
+                for r in b.roles:
+                    self.role_pub.setdefault(r, pub)
+        missing = [ROLES[r] for r in ROLES if r not in self.role_pub]
+        if missing and self.publishers:
+            log.info("맡은 봇이 없는 역할: %s — 해당 메시지는 화면에만 표시합니다", ", ".join(missing))
+        self.publisher = self.role_pub.get("reaction")
+
+    async def _start_reader(self) -> None:
+        """채팅 읽기 (이벤트·참여 유도용). 로그인된 봇이 하나라도 있어야 한다. 화면 모드에서도 읽기는 실제로 한다."""
+        reg, s = self.registry, self.s
+        video = s.chat_video_id or self.args.url
+        if not reg or not video:
+            return
+        rb = reg.reader()
+        if not rb:
+            log.info("채팅 읽기 꺼짐 — 로그인된 봇이 없습니다 (추첨·퀴즈·환영은 채팅을 읽어야 동작)")
+            return
+        from chat_reader import ChatReader
+        from chat_sender import SendError, YouTubeApiSender
+        pub = self.publishers.get(rb.id)
+        api = pub.sender if pub and isinstance(pub.sender, YouTubeApiSender) else None
+        if api is None:
+            api = YouTubeApiSender(video, str(rb.cs_path(reg.base)), str(rb.token_path(reg.base)), quota=self.quota)
+            try:
+                await api.start()
+            except SendError as e:
+                log.warning("채팅 읽기를 시작하지 못했습니다: %s", e)
+                await api.close()
+                return
+            self._reader_api = api
+        self.reader = ChatReader(api, self._on_chat, min_interval=reg.read_interval,
+                                 exclude_ids=reg.bot_channel_ids(), quota=self.quota)
+        self.reader.start()
+        log.info("채팅 읽기 — [%s] 계정 사용", rb.name)
+
+    def _start_community(self) -> None:
+        from community import CommunityConfig, CommunityHub
+        s = self.s
+        cfg = CommunityConfig.load(s.community_file)
+        errs = cfg.validate()
+        if errs:
+            log.warning("이벤트 설정 오류로 이벤트·참여 유도를 끕니다: %s", " / ".join(errs))
+            return
+        self.community = CommunityHub(cfg, self._send_role, s.community_state_file, reading=self.reader is not None)
+        self.community.start()
+
+    def _on_chat(self, msgs) -> None:
+        if self.community and not self.stop.is_set():
+            self.community.on_messages(msgs)
+
+    def _send_role(self, role: str, text: str) -> None:
+        """역할 봇으로 메시지 전송 (이벤트·참여 유도). 즉시 반환."""
+        from bots import ROLES
+        pub = self.role_pub.get(role)
+        if pub is None:
+            log.info("📣 [%s 봇 없음] (화면에만 표시) :: %s", ROLES.get(role, role), text)
+            return
+
+        async def go() -> None:
+            ok = await pub.send_direct(text)
+            real = pub.sender.name != "console"
+            if ok:
+                log.info("📣 [%s] %s :: %s%s", pub.bot_name, "전송됨" if real else "(화면 모드 — 전송 안 함)",
+                         pub.policy.label, text)
+            else:
+                log.warning("📣 [%s] 전송 실패 :: %s", pub.bot_name, text)
+
+        t = asyncio.create_task(go())
+        self._send_tasks.add(t)
+        t.add_done_callback(self._send_tasks.discard)
 
     async def _start_reactions(self) -> None:
         from reaction import ReactionConfig, ReactionEngine, build_persona, setup_reaction_logging
@@ -223,10 +329,15 @@ class Orchestrator:
             if errs:
                 log.warning("음성 명령 설정 오류로 끕니다: %s", " / ".join(errs))
             return
-        real = bool(self.publisher and s.chat_sender == "youtube-api")
+        guide = self.role_pub.get("guide")
+        real = bool(guide and guide.sender.name != "console")
+        hub = self.community
+        actions = {"raffle_start": hub.raffle_start, "raffle_end": hub.raffle_end,
+                   "quiz": hub.quiz_start, "ranking": hub.ranking} if hub else {}
         self.commands = CommandRunner(
-            cs, self.publisher, real=real, label=s.command_label,
-            counter=DailyCounter(s.chat_state_file + ".commands"), max_per_day=s.command_max_per_day)
+            cs, guide, real=real, label=guide.policy.label if guide else "",
+            counter=DailyCounter(s.chat_state_file + ".commands"), max_per_day=s.command_max_per_day,
+            actions=actions)
         self.vocab_hint = cs.vocab_hint()
         log.info("음성 명령 켜짐 — 호출어: %s | 명령 %d개 (%s)%s", ", ".join(cs.wake_words), len(cs.commands),
                  ", ".join(c.name for c in cs.commands), "" if real else " | 화면 모드: 전송하지 않음")
@@ -289,6 +400,9 @@ class Orchestrator:
                 await self._start_chat()
                 if self.s.reactions:
                     await self._start_reactions()
+                if self.s.community_enabled and self.s.chat_sender != "off":
+                    await self._start_reader()
+                    self._start_community()
                 if self.s.commands_enabled:
                     self._start_commands()
             except ImportError as e:
@@ -350,14 +464,25 @@ class Orchestrator:
                     pass
             await self._step("오디오 스트림(ffmpeg/yt-dlp) 및 STT 정리", _await_pipeline(), 8.0)
 
-        # 2) 리액션: 진행 중인 생성을 잠깐 기다린 뒤 Claude 클라이언트 닫기
+        # 2) 이벤트·참여 유도: 방송 종료 순위 발표(강제 종료가 아니면) 후 채팅 읽기 중단
+        community, self.community = self.community, None
+        if community:
+            await self._step("이벤트·참여 유도 정리 (종료 순위 발표)", community.aclose(announce=not self.force), 3.0)
+        if self.reader:
+            await self._step("채팅 읽기 중단", self.reader.aclose(), 3.0)
+        if self._reader_api:
+            await self._step("채팅 읽기 연결 닫기", self._reader_api.close(), 3.0)
+        # 3) 리액션: 진행 중인 생성을 잠깐 기다린 뒤 Claude 클라이언트 닫기
         if self.engine:
             await self._step("리액션 엔진 정리", self.engine.aclose(wait=3.0), 5.0)
         if commands:
             await self._step("음성 명령 정리", commands.aclose(wait=4.0), 5.0)
-        # 3) 채팅: 진행 중인 전송 1건만 마무리 후 HTTP 클라이언트 닫기
-        if self.publisher:
-            await self._step("채팅 전송기 정리", self.publisher.close(wait=5.0), 7.0)
+        # 4) 채팅: 대기 중인 이벤트 메시지를 보낸 뒤 봇별 HTTP 연결 닫기
+        if self._send_tasks:
+            await self._step(f"남은 봇 메시지 {len(self._send_tasks)}건 전송",
+                             asyncio.wait(set(self._send_tasks), timeout=10), 11.0)
+        for bid, pub in list(self.publishers.items()):
+            await self._step(f"채팅 전송기 정리 [{pub.bot_name or bid}]", pub.close(wait=5.0), 7.0)
 
         # 4) 남은 백그라운드 태스크 일괄 취소
         rest = [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()

@@ -172,6 +172,31 @@ label.f { display: block; font-size: 13px; color: var(--muted); margin: 0 0 6px;
 .ver { font-size: 12px; color: var(--dim); padding: 0 12px; display: flex; justify-content: space-between; align-items: center; }
 .ver button { border: 0; background: none; color: var(--accent); cursor: pointer; font-size: 12px; padding: 0; }
 
+/* bots & events */
+.stats.six { grid-template-columns: repeat(6, 1fr); }
+.botc .head { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
+.botc .head input.bname { font-weight: 700; font-size: 15px; max-width: 260px; }
+.rolechips { display: flex; gap: 8px; flex-wrap: wrap; }
+.rolechips label { display: flex; gap: 6px; align-items: center; padding: 6px 11px; border: 1px solid var(--line); border-radius: 99px; cursor: pointer; font-size: 13px; color: var(--muted); }
+.rolechips label.on { border-color: var(--accent); color: var(--text); background: rgba(79,140,255,.08); }
+.conn { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+.conn > div { background: var(--panel2); border-radius: 10px; padding: 12px; font-size: 13px; }
+.conn .st { margin-bottom: 8px; }
+.okc { color: var(--ok); } .noc { color: var(--warn); }
+.qbar { height: 8px; background: var(--panel2); border-radius: 99px; overflow: hidden; margin: 6px 0 12px; }
+.qbar i { display: block; height: 100%; background: var(--ok); }
+.qbar i.mid { background: var(--warn); } .qbar i.hi { background: var(--err); }
+.chatline { color: var(--muted); font-size: 13px; }
+.chatline b { color: #c9b6ff; font-weight: 600; margin-right: 6px; }
+.botpill { display: inline-block; font-size: 13px; padding: 6px 10px; border-radius: 8px; line-height: 1.6; max-width: 90%; }
+.botpill.real { background: rgba(52,199,123,.12); color: var(--ok); }
+.botpill.sim { background: var(--panel2); color: var(--muted); }
+.botpill b { color: var(--text); }
+.ev.action .x { color: #ffb86b; font-size: 13px; }
+.quizrow { display: grid; grid-template-columns: 1.4fr 1fr auto; gap: 8px; margin-bottom: 8px; }
+.toprank { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.toprank span { background: var(--panel2); border-radius: 99px; padding: 4px 10px; font-size: 13px; }
+
 /* toast & modal */
 .toast { position: fixed; right: 22px; bottom: 22px; display: flex; flex-direction: column; gap: 8px; z-index: 50; }
 .toast div { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 10px; padding: 11px 14px; box-shadow: var(--shadow); max-width: 420px; animation: in .2s ease; }
@@ -186,7 +211,10 @@ label.f { display: block; font-size: 13px; color: var(--muted); margin: 0 0 6px;
 .offline .card { max-width: 420px; text-align: center; }
 details summary { cursor: pointer; color: var(--muted); }
 
+@media (max-width: 1200px) { .stats.six { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 900px) {
+  .stats.six { grid-template-columns: repeat(2, 1fr); }
+  .conn { grid-template-columns: 1fr; }
   .app { grid-template-columns: 1fr; }
   aside { flex-direction: row; overflow-x: auto; padding: 8px; border-right: 0; border-bottom: 1px solid var(--line); }
   .brand, .side-foot { display: none; }
@@ -204,7 +232,8 @@ details summary { cursor: pointer; color: var(--muted); }
     <button class="nav" data-page="preview"><span class="ic">💬</span>리액션 미리보기</button>
     <button class="nav" data-page="commands"><span class="ic">🎤</span>음성 명령</button>
     <button class="nav" data-page="settings"><span class="ic">⚙</span>설정<span class="badge" id="b-settings"></span></button>
-    <button class="nav" data-page="youtube"><span class="ic">🔗</span>유튜브 연결<span class="badge" id="b-youtube"></span></button>
+    <button class="nav" data-page="events"><span class="ic">🎁</span>이벤트 · 참여</button>
+    <button class="nav" data-page="bots"><span class="ic">🤖</span>봇 관리<span class="badge" id="b-bots"></span></button>
     <div class="side-foot">
       <button class="nav" id="themeBtn"><span class="ic">◐</span>화면 밝기</button>
       <button class="nav" id="folderBtn"><span class="ic">📁</span>데이터 폴더 열기</button>
@@ -265,12 +294,13 @@ details summary { cursor: pointer; color: var(--muted); }
         <div class="quick" id="quickBtns"></div>
       </div>
 
-      <div class="stats">
+      <div class="stats six">
         <div class="stat"><div class="k">상태</div><div class="v"><span class="pill" id="phasePill"><span class="d"></span><span id="phaseTxt">대기 중</span></span></div></div>
         <div class="stat"><div class="k">경과 시간</div><div class="v" id="sElapsed">00:00:00</div></div>
         <div class="stat"><div class="k">자막 / 리액션</div><div class="v"><span id="sStt">0</span> <small>줄</small> · <span id="sReact">0</span> <small>개</small></div></div>
         <div class="stat"><div class="k" id="sSentK">채팅 전송</div><div class="v"><span id="sSent">0</span><small> / <span id="sMax">20</span> · 오늘 <span id="sToday">0</span>/<span id="sDay">60</span></small></div></div>
-        <div class="stat"><div class="k">다음 채팅 가능</div><div class="v" id="sNext">—</div></div>
+        <div class="stat"><div class="k">다음 리액션 가능</div><div class="v" id="sNext">—</div></div>
+        <div class="stat"><div class="k">채팅 참여</div><div class="v"><span id="sPeople">—</span><small id="sMsgs"></small></div></div>
       </div>
 
       <div class="card">
@@ -279,6 +309,7 @@ details summary { cursor: pointer; color: var(--muted); }
             <button class="chip on" data-f="all">전체</button>
             <button class="chip" data-f="react">리액션·채팅만</button>
             <button class="chip" data-f="stt">자막만</button>
+            <button class="chip" data-f="chat">시청자 채팅</button>
           </div>
           <div class="row">
             <label style="font-size:13px;color:var(--muted);display:flex;gap:6px;align-items:center"><input type="checkbox" id="showSys" checked> 상태 메시지</label>
@@ -394,12 +425,7 @@ details summary { cursor: pointer; color: var(--muted); }
           <div class="field" data-name="chat_max_per_stream"><label class="f">방송당 최대</label><input type="number" min="1" max="200"><div class="err"></div></div>
           <div class="field" data-name="chat_max_per_day"><label class="f">하루 최대</label><input type="number" min="1" max="200"><div class="err"></div></div>
         </div>
-        <div class="field" data-name="command_label" style="max-width:340px;float:right;width:48%">
-          <label class="f">음성 명령 메시지 앞 표기 (선택)</label><input type="text" placeholder="예: 📢 "><div class="help">비워 두면 작성한 내용 그대로 올라갑니다.</div><div class="err"></div>
-        </div>
-        <div class="field" data-name="chat_label" style="max-width:340px">
-          <label class="f">메시지 앞 AI 표기</label><input type="text"><div class="help">자동 메시지임을 알리는 표기입니다. 문구는 바꿀 수 있지만 비울 수는 없습니다.</div><div class="err"></div>
-        </div>
+        <div class="help" style="font-size:12px;color:var(--dim)">위 간격·한도는 AI 리액션에 적용됩니다. 메시지 앞 표기는 <a href="#" onclick="go('bots');return false">[봇 관리]</a>에서 봇마다 정합니다.</div>
       </div>
 
       <div class="card">
@@ -445,67 +471,123 @@ details summary { cursor: pointer; color: var(--muted); }
       <div class="savebar"><button class="btn primary big" id="cmdSave">저장</button><span id="cmdSaveMsg" style="color:var(--muted)"></span></div>
     </section>
 
-    <!-- ========== 유튜브 연결 ========== -->
-    <section class="page" id="p-youtube">
-      <h1>유튜브 연결</h1>
-      <p class="sub">리액션을 채팅창에 <b>실제로 보내려면</b> 한 번만 연결하면 됩니다. 화면에만 표시할 거라면 필요 없습니다.</p>
+    <!-- ========== 이벤트 · 참여 ========== -->
+    <section class="page" id="p-events">
+      <h1>이벤트 · 참여 유도</h1>
+      <p class="sub">이벤트봇과 참여 유도봇이 하는 일을 정합니다. 방송 중에는 아래 버튼이나 음성 명령
+        <b>"히든아, 추첨 시작 / 추첨 마감 / 퀴즈 내줘 / 채팅 순위"</b>로 실행합니다.</p>
 
+      <div class="card" id="evLive">
+        <h2>🔴 지금 방송 <span class="hint" id="evReading"></span></h2>
+        <div class="stats" style="grid-template-columns:repeat(4,1fr);margin-bottom:12px">
+          <div class="stat"><div class="k">채팅 참여자</div><div class="v" id="evPeople">—</div></div>
+          <div class="stat"><div class="k">채팅 수</div><div class="v" id="evMsgs">—</div></div>
+          <div class="stat"><div class="k">추첨</div><div class="v" id="evRaffle" style="font-size:15px">—</div></div>
+          <div class="stat"><div class="k">퀴즈</div><div class="v" id="evQuiz" style="font-size:15px">—</div></div>
+        </div>
+        <div class="row wrap">
+          <button class="btn primary" data-act="raffle_start">🎁 추첨 시작</button>
+          <button class="btn" data-act="raffle_end">🎉 추첨 마감 · 발표</button>
+          <button class="btn" data-act="quiz">❓ 퀴즈 내기</button>
+          <button class="btn" data-act="ranking">🏆 지금 순위 발표</button>
+        </div>
+        <div class="toprank" id="evTop"></div>
+      </div>
+
+      <div class="card">
+        <h2>🎁 키워드 추첨 <span class="hint">이벤트봇</span></h2>
+        <div class="grid4">
+          <div class="field"><label class="f">참여 키워드</label><input type="text" id="cf-raffle_keyword"></div>
+          <div class="field"><label class="f">당첨자 수</label><input type="number" min="1" max="10" id="cf-raffle_winners"></div>
+          <div class="field"><label class="f">자동 마감 (분, 0=직접)</label><input type="number" min="0" max="120" step="0.5" id="cf-raffle_minutes"></div>
+        </div>
+        <div class="grid2">
+          <div class="field"><label class="f">시작 안내</label><input type="text" id="cf-raffle_start_msg"><div class="help">{keyword} 키워드 · {deadline} 마감 안내</div></div>
+          <div class="field"><label class="f">당첨 발표</label><input type="text" id="cf-raffle_result_msg"><div class="help">{winners} 당첨자 · {count} 참여 인원</div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>❓ 퀴즈 <span class="hint">이벤트봇 · 정답을 가장 먼저 친 시청자 발표, 순서대로 출제</span></h2>
+        <div class="field" style="max-width:200px"><label class="f">제한 시간 (초)</label><input type="number" min="10" max="600" id="cf-quiz_seconds"></div>
+        <div id="quizList"></div>
+        <button class="btn" id="addQuiz">+ 퀴즈 추가</button>
+      </div>
+
+      <div class="card">
+        <h2>🙌 참여 유도 <span class="hint">참여 유도봇</span></h2>
+        <label class="f" style="display:flex;gap:8px;align-items:center;cursor:pointer;color:var(--text)"><input type="checkbox" id="cf-welcome_enabled"> <b>첫 채팅 환영</b> — 오늘 처음 채팅한 시청자를 모아서 한 번에</label>
+        <div class="grid4" style="margin-top:8px">
+          <div class="field"><label class="f">모으는 간격 (초)</label><input type="number" min="30" max="600" id="cf-welcome_interval"></div>
+          <div class="field"><label class="f">한 번에 이름 수</label><input type="number" min="1" max="10" id="cf-welcome_max_names"></div>
+        </div>
+        <div class="field"><label class="f">환영 문구</label><input type="text" id="cf-welcome_msg"><div class="help">{names} 이름들 (많으면 "외 N명")</div></div>
+        <hr style="border:0;border-top:1px solid var(--line);margin:16px 0">
+        <label class="f" style="display:flex;gap:8px;align-items:center;cursor:pointer;color:var(--text)"><input type="checkbox" id="cf-quiet_enabled"> <b>조용할 때 유도</b> — 채팅이 한동안 없으면 한 번만</label>
+        <div class="grid4" style="margin-top:8px">
+          <div class="field"><label class="f">조용함 기준 (초)</label><input type="number" min="60" max="3600" id="cf-quiet_seconds"></div>
+          <div class="field"><label class="f">유도 사이 최소 간격 (초)</label><input type="number" min="300" id="cf-quiet_min_gap"></div>
+        </div>
+        <div class="field"><label class="f">유도 멘트 (한 줄에 하나, 무작위로 하나 선택)</label><textarea id="cf-quiet_messages" rows="3"></textarea></div>
+        <hr style="border:0;border-top:1px solid var(--line);margin:16px 0">
+        <label class="f" style="display:flex;gap:8px;align-items:center;cursor:pointer;color:var(--text)"><input type="checkbox" id="cf-ranking_enabled"> <b>방송 종료 시 순위</b> — 중지할 때 채팅 참여 상위 시청자에게 감사</label>
+        <div class="grid4" style="margin-top:8px">
+          <div class="field"><label class="f">순위 인원</label><input type="number" min="1" max="10" id="cf-ranking_top"></div>
+        </div>
+        <div class="field"><label class="f">순위 문구</label><input type="text" id="cf-ranking_msg"><div class="help">{n} 인원 · {list} "1. 이름(채팅 수) / 2. …"</div></div>
+      </div>
+      <div class="savebar"><button class="btn primary big" id="evSave">저장</button><span id="evSaveMsg" style="color:var(--muted)"></span></div>
+    </section>
+
+    <!-- ========== 봇 관리 ========== -->
+    <section class="page" id="p-bots">
+      <h1>봇 관리</h1>
+      <p class="sub">역할마다 다른 봇 계정을 연결해 이름으로 역할을 구분합니다. 봇 하나가 여러 역할을 맡아도 됩니다.</p>
       <div class="notice" style="margin-bottom:14px">
-        <b>먼저 확인하세요</b> — 본인 방송이나 스트리머가 허락한 방송에서만 쓰세요. <b>봇 전용 구글 계정</b>을 따로 만들어 쓰는 것을 권장합니다.
-        모든 메시지에는 AI 표기가 붙고, 45~90초 간격·방송당 횟수 제한이 자동으로 적용됩니다.
+        <b>먼저 확인하세요</b> — 본인 방송이나 허락받은 방송에서만 쓰세요. 봇 계정의 유튜브 이름에 역할이 드러나게 지으세요
+        (예: 히든 소통봇, 히든 안내봇). 봇마다 표기가 메시지 앞에 붙고, <b>AI 리액션을 맡은 봇은 표기를 비울 수 없습니다.</b>
+        한 역할은 한 봇만 맡을 수 있습니다.
       </div>
-
-      <div class="card step" id="st1">
-        <div class="n">1</div>
-        <div>
-          <h2 style="margin-bottom:4px">Google Cloud 에서 OAuth 파일 만들기 <span class="hint">약 10분, 처음 한 번</span></h2>
-          <ol>
-            <li>봇 계정으로 <a href="https://console.cloud.google.com/projectcreate" target="_blank">새 프로젝트 만들기 ↗</a></li>
-            <li><a href="https://console.cloud.google.com/apis/library/youtube.googleapis.com" target="_blank">YouTube Data API v3 ↗</a> 에서 <b>사용</b> 클릭</li>
-            <li><a href="https://console.cloud.google.com/apis/credentials/consent" target="_blank">OAuth 동의 화면 ↗</a> — 유형 <b>외부</b>, 앱 이름·이메일 입력, <b>테스트 사용자에 봇 계정 추가</b></li>
-            <li><a href="https://console.cloud.google.com/apis/credentials/oauthclient" target="_blank">OAuth 클라이언트 만들기 ↗</a> — 유형 <b>데스크톱 앱</b> → 만든 뒤 <b>JSON 다운로드</b></li>
+      <div class="card">
+        <details>
+          <summary><b>처음이라면: Google Cloud 에서 OAuth 파일 만드는 법</b> (봇 계정마다 약 10분)</summary>
+          <ol style="color:var(--muted);margin:10px 0 4px;padding-left:18px;line-height:1.9">
+            <li><a href="https://console.cloud.google.com/projectcreate" target="_blank">새 프로젝트 만들기 ↗</a></li>
+            <li><a href="https://console.cloud.google.com/apis/library/youtube.googleapis.com" target="_blank">YouTube Data API v3 ↗</a> 에서 <b>사용</b></li>
+            <li><a href="https://console.cloud.google.com/apis/credentials/consent" target="_blank">OAuth 동의 화면 ↗</a> — 외부, <b>테스트 사용자에 봇 계정들 추가</b></li>
+            <li><a href="https://console.cloud.google.com/apis/credentials/oauthclient" target="_blank">OAuth 클라이언트 만들기 ↗</a> — <b>데스크톱 앱</b> → JSON 다운로드</li>
           </ol>
+          <p style="color:var(--muted);font-size:13px;margin:6px 0 0">💡 <b>할당량</b>: 프로젝트마다 하루 10,000 단위입니다. 봇마다 프로젝트를 따로 만들면 각자 10,000,
+            같은 JSON 파일을 여러 봇에 쓰면 10,000을 함께 씁니다. 채팅 1건 전송 ≈ 50, 채팅 읽기 1회 ≈ 5 단위.</p>
+        </details>
+      </div>
+      <div id="botList"></div>
+      <div class="row" style="margin-bottom:14px"><button class="btn" id="addBot">+ 봇 추가</button></div>
+      <input type="file" id="botFile" accept=".json,application/json" hidden>
+
+      <div class="card">
+        <h2>👀 채팅 읽기 <span class="hint">추첨·퀴즈·환영·순위에 필요 · 로그인된 봇 하나로 읽습니다</span></h2>
+        <div class="grid2">
+          <div class="field"><label class="f">채팅 읽기에 쓸 봇</label><select id="readerBot"></select></div>
+          <div class="field"><label class="f">읽기 간격 (초, 3~120)</label><input type="number" id="readInterval" min="3" max="120"><div class="help" id="readEst"></div></div>
         </div>
       </div>
 
-      <div class="card step" id="st2">
-        <div class="n">2</div>
-        <div>
-          <h2>다운로드한 JSON 파일 넣기</h2>
-          <div class="drop" id="drop">
-            <div style="font-size:26px">📄</div>
-            <div id="dropTxt"><b>여기에 파일을 끌어다 놓거나 클릭</b>해서 선택하세요<br><small>보통 다운로드 폴더에 client_secret_....json 이름으로 있습니다</small></div>
-          </div>
-          <input type="file" id="fileIn" accept=".json,application/json" hidden>
-        </div>
+      <div class="card">
+        <h2>📊 오늘 유튜브 API 사용량 <span class="hint">프로젝트별 · 미국 태평양 시간 자정에 초기화 · 이 프로그램이 센 추정치</span></h2>
+        <div id="quotaList"><span style="color:var(--dim)">OAuth 파일을 올린 봇이 없습니다.</span></div>
       </div>
 
-      <div class="card step" id="st3">
-        <div class="n">3</div>
-        <div>
-          <h2>구글 로그인</h2>
-          <p style="color:var(--muted);margin:0 0 10px">버튼을 누르면 브라우저가 열립니다. 봇 계정으로 로그인하고 <b>허용</b>을 누르세요.
-            "확인되지 않은 앱" 화면이 나오면 <b>고급 → (앱 이름)(으)로 이동</b>을 누르면 됩니다.</p>
-          <div class="row wrap">
-            <button class="btn primary" id="loginBtn">구글 로그인</button>
-            <span id="loginState" style="color:var(--muted)"></span>
-            <button class="btn link" id="logoutBtn" style="display:none">로그아웃</button>
-          </div>
+      <div class="card">
+        <h2>🧪 테스트 메시지 <span class="hint">라이브 방송을 켠 상태에서 1건</span></h2>
+        <div class="row wrap">
+          <select id="testBot" style="width:170px"></select>
+          <input class="grow" id="testUrl" type="url" placeholder="https://www.youtube.com/watch?v=..." style="min-width:220px">
+          <input id="testText" type="text" value="테스트 메시지입니다" style="width:190px">
+          <button class="btn" id="testBtn">보내기</button>
         </div>
       </div>
-
-      <div class="card step" id="st4">
-        <div class="n">4</div>
-        <div>
-          <h2>테스트 메시지 보내기</h2>
-          <p style="color:var(--muted);margin:0 0 10px">라이브 방송을 켠 상태에서 1건만 보내 확인합니다.</p>
-          <div class="row wrap">
-            <input class="grow" id="testUrl" type="url" placeholder="https://www.youtube.com/watch?v=..." style="min-width:240px">
-            <input id="testText" type="text" value="테스트 메시지입니다" style="width:220px">
-            <button class="btn" id="testBtn">보내기</button>
-          </div>
-        </div>
-      </div>
+      <div class="savebar"><button class="btn primary big" id="botSave">저장</button><span id="botSaveMsg" style="color:var(--muted)"></span></div>
     </section>
   </main>
 </div>
@@ -542,10 +624,13 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;",
 
 /* ---------- 탭 ---------- */
 function go(page) {
+  if (!document.getElementById("p-" + page)) page = "live";
   $$(".nav[data-page]").forEach(b => b.classList.toggle("active", b.dataset.page === page));
   $$(".page").forEach(p => p.classList.toggle("active", p.id === "p-" + page));
   if (page === "settings") loadSettings();
   if (page === "commands") loadCommands();
+  if (page === "bots") loadBots();
+  if (page === "events") loadEvents();
   try { localStorage.setItem("tab", page); } catch (e) {}
 }
 $$(".nav[data-page]").forEach(b => b.onclick = () => go(b.dataset.page));
@@ -639,7 +724,7 @@ function renderState(s) {
     [s.setup.groq, "Groq API 키", "음성을 자막으로 바꿉니다", "settings"],
     [s.setup.anthropic, "Anthropic API 키", "리액션을 만듭니다", "settings"],
     [s.setup.ffmpeg, "ffmpeg", "YouTubeLiveAI.exe 와 같은 폴더에 ffmpeg.exe 가 있어야 합니다", null],
-    [s.setup.token ? true : null, "유튜브 연결 (선택)", "채팅에 실제로 보낼 때만 필요합니다", "youtube"],
+    [s.setup.token ? true : null, "봇 계정 연결 (선택)", "채팅에 실제로 보내거나 추첨·환영처럼 채팅을 읽을 때 필요합니다", "bots"],
   ];
   const need = items.slice(0, 3).some(i => !i[0]);
   $("#setupCard").style.display = need ? "" : "none";
@@ -650,25 +735,15 @@ function renderState(s) {
   $("#b-live").classList.toggle("on", need);
   $("#b-settings").classList.toggle("on", !s.setup.groq || !s.setup.anthropic || Object.keys(s.settings_errors || {}).length > 0);
 
-  // 유튜브 연결 단계
-  $("#st2").classList.toggle("done", s.setup.client_secret);
-  $("#st1").classList.toggle("done", s.setup.client_secret);
-  $("#st3").classList.toggle("done", s.setup.token);
-  const drop = $("#drop");
-  drop.classList.toggle("done", s.setup.client_secret);
-  if (s.setup.client_secret) $("#dropTxt").innerHTML = "<b>✓ OAuth 파일이 저장되어 있습니다</b><br><small>다른 파일로 바꾸려면 다시 끌어다 놓으세요</small>";
-  const ls = $("#loginState");
-  if (s.setup.login_busy) { ls.innerHTML = '<span class="spinner"></span> 브라우저에서 로그인을 마쳐 주세요… (5분 제한)'; }
-  else if (s.setup.token) {
-    ls.innerHTML = s.setup.channel ? `✅ 연결됨 — 채널: <b>${esc(s.setup.channel)}</b>`
-      : s.setup.channel_error ? `⚠ 로그인 정보는 있지만 확인 실패: ${esc(s.setup.channel_error)}` : "✅ 로그인되어 있습니다";
-  } else ls.textContent = s.setup.client_secret ? "아직 로그인하지 않았습니다." : "2단계를 먼저 해 주세요.";
-  $("#loginBtn").disabled = !s.setup.client_secret || s.setup.login_busy;
-  $("#loginBtn").textContent = s.setup.token ? "다른 계정으로 다시 로그인" : "구글 로그인";
-  $("#logoutBtn").style.display = s.setup.token ? "" : "none";
-  $("#testBtn").disabled = !s.setup.token;
-  $("#b-youtube").classList.toggle("on", false);
-  $("#realModeBtn").title = s.setup.token ? "" : "[유튜브 연결]에서 로그인하면 사용할 수 있습니다";
+  $("#b-bots").classList.toggle("on", !!(s.bots && s.bots.list.length && !s.bots.any_ready));
+  $("#realModeBtn").title = s.setup.token ? "" : "[봇 관리]에서 봇 계정으로 로그인하면 사용할 수 있습니다";
+
+  // 채팅 참여 / 이벤트 현황
+  const c = s.community;
+  $("#sPeople").textContent = c ? c.participants + "명" : "—";
+  $("#sMsgs").textContent = c ? ` · ${c.messages}개` : "";
+  renderEventsLive(s);
+  if (BOTS_LOADED && s.bots) renderQuota(s.bots);
 }
 
 /* ---------- 모드 ---------- */
@@ -680,7 +755,7 @@ function setMode(m) {
     : "채팅창에는 아무것도 보내지 않고, 보낼 메시지만 아래에 보여 줍니다.";
 }
 $$("#modeSeg button").forEach(b => b.onclick = () => {
-  if (b.dataset.mode === "youtube-api" && ST && !ST.setup.token) { toast("먼저 [유튜브 연결]에서 로그인하세요.", "err"); return; }
+  if (b.dataset.mode === "youtube-api" && ST && !ST.setup.token) { toast("먼저 [봇 관리]에서 봇 계정으로 로그인하세요.", "err"); return; }
   setMode(b.dataset.mode);
 });
 
@@ -719,8 +794,9 @@ function visible(el) {
   const k = el.dataset.k;
   const sys = ["info", "warn", "error", "start", "end", "wake"].includes(k);
   if (sys && !$("#showSys").checked && k !== "error") return false;
-  if (filter === "react") return k === "reaction" || k === "sent" || k === "command" || k === "error";
+  if (filter === "react") return ["reaction", "sent", "command", "botmsg", "action", "error"].includes(k);
   if (filter === "stt") return k === "stt";
+  if (filter === "chat") return k === "chat" || k === "botmsg";
   return true;
 }
 function addEvent(ev, scroll = true) {
@@ -734,8 +810,11 @@ function addEvent(ev, scroll = true) {
   else if (ev.kind === "command") body = `<span class="cmdpill ${ev.real ? "real" : "sim"}">📢 <b>${esc(ev.name)}</b> ${ev.part !== "1/1" ? esc(ev.part) : ""}
       · ${ev.real ? "채팅에 올림" : "화면 모드 — 전송 안 함"} · ${esc(ev.text)}</span>`;
   else if (ev.kind === "wake") body = `<span class="x">${esc(ev.text)}</span>`;
-  else if (ev.kind === "sent") body = ev.real ? `<span class="sendpill real">✓ 채팅 전송됨 · ${esc(ev.text)}</span>`
-    : `<span class="sendpill sim">🖥 화면 모드 — 실제로는 전송하지 않음 · ${esc(ev.text)}</span>`;
+  else if (ev.kind === "chat") body = `<span class="chatline"><b>${ev.owner ? "👑 " : ""}${esc(ev.author)}</b>${esc(ev.text)}</span>`;
+  else if (ev.kind === "botmsg") body = `<span class="botpill ${ev.real ? "real" : "sim"}">🤖 <b>${esc(ev.bot)}</b> · ${ev.real ? "채팅에 올림" : ev.note && ev.note.includes("화면에만") ? "맡은 봇 없음 — 화면에만" : "화면 모드 — 전송 안 함"} · ${esc(ev.text)}</span>`;
+  else if (ev.kind === "action") body = `<span class="x">${esc(ev.text)}</span>`;
+  else if (ev.kind === "sent") body = ev.real ? `<span class="sendpill real">✓ ${ev.bot ? "<b>" + esc(ev.bot) + "</b> " : ""}채팅 전송됨 · ${esc(ev.text)}</span>`
+    : `<span class="sendpill sim">🖥 ${ev.bot ? esc(ev.bot) + " · " : ""}화면 모드 — 실제로는 전송하지 않음 · ${esc(ev.text)}</span>`;
   else body = `<span class="x">${esc(ev.text)}</span>`;
   d.innerHTML = `<span class="t">${clock(ev.ts)}</span><span class="b">${body}</span>`;
   d.style.display = visible(d) ? "" : "none";
@@ -841,34 +920,197 @@ $("#pvBtn").onclick = async () => {
   if (!r.ok) toast(r.error, "err");
 };
 
-/* ---------- 유튜브 연결 ---------- */
-const drop = $("#drop"), fileIn = $("#fileIn");
-drop.onclick = () => fileIn.click();
-["dragenter", "dragover"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add("over"); }));
-["dragleave", "drop"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove("over"); }));
-drop.addEventListener("drop", e => { if (e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]); });
-fileIn.onchange = () => { if (fileIn.files[0]) upload(fileIn.files[0]); fileIn.value = ""; };
-async function upload(file) {
-  if (file.size > 200000) { toast("파일이 너무 큽니다. Google Cloud 에서 받은 JSON 파일인지 확인하세요.", "err"); return; }
-  const r = await api("/api/youtube/client-secret", { content: await file.text() });
-  toast(r.ok ? r.message : r.error, r.ok ? "ok" : "err");
+/* ---------- 봇 관리 ---------- */
+let BOTS = null, BOTS_LOADED = false, ROLE_NAMES = {}, uploadFor = null;
+async function loadBots(keepEdits = true) {
+  const pending = keepEdits && BOTS_LOADED && $$("#botList .botc").length ? collectBots() : null;  // 저장 전 수정 내용
+  const r = await api("/api/bots");
+  if (!r.ok) { toast(r.error, "err"); return; }
+  BOTS = r; ROLE_NAMES = r.roles; BOTS_LOADED = true;
+  renderBots();
+  if (pending) {                                   // 파일 올리기·로그인 등으로 다시 그려도 입력하던 내용 유지
+    pending.bots.forEach(pb => {
+      const d = document.querySelector(`#botList .botc[data-id="${pb.id}"]`); if (!d) return;
+      $(".bname", d).value = pb.name; $(".blabel", d).value = pb.label; $(".benabled", d).checked = pb.enabled;
+      $$(".rolechips input", d).forEach(i => { i.checked = pb.roles.includes(i.value); i.parentElement.classList.toggle("on", i.checked); });
+    });
+    if ([...$("#readerBot").options].some(o => o.value === pending.reader_bot)) $("#readerBot").value = pending.reader_bot;
+    $("#readInterval").value = pending.read_interval; updateEst();
+  }
 }
-$("#loginBtn").onclick = async () => {
-  if (ST && ST.setup.token && !confirm("현재 로그인을 지우고 다른 계정으로 다시 로그인할까요?")) return;
-  if (ST && ST.setup.token) await api("/api/youtube/logout", {});
-  toast("브라우저가 열립니다. 봇 계정으로 로그인하고 허용을 누르세요.");
-  const r = await api("/api/youtube/login", {});
-  toast(r.ok ? `연결되었습니다 — 채널: ${r.channel}` : r.error, r.ok ? "ok" : "err");
+function botCard(b) {
+  const d = document.createElement("div");
+  d.className = "card botc"; d.dataset.id = b.id;
+  const others = BOTS.list.filter(x => x.id !== b.id && x.has_secret);
+  d.innerHTML = `
+    <div class="head">
+      <span style="font-size:20px">🤖</span>
+      <input type="text" class="bname" value="${esc(b.name)}" placeholder="봇 이름 (예: 소통봇)">
+      <label style="display:flex;gap:6px;align-items:center;font-size:13px;color:var(--muted);cursor:pointer"><input type="checkbox" class="benabled" ${b.enabled ? "checked" : ""}> 사용</label>
+      <span class="grow"></span>
+      <button class="btn ghost bdel">삭제</button>
+    </div>
+    <div class="field"><label class="f">맡을 역할</label><div class="rolechips">
+      ${Object.entries(ROLE_NAMES).map(([k, v]) => `<label class="${b.roles.includes(k) ? "on" : ""}"><input type="checkbox" value="${k}" ${b.roles.includes(k) ? "checked" : ""} hidden>${v}</label>`).join("")}
+    </div></div>
+    <div class="field" style="max-width:340px"><label class="f">메시지 앞 표기</label><input type="text" class="blabel" value="${esc(b.label)}">
+      <div class="help">이 봇이 보내는 모든 메시지 앞에 붙습니다${b.roles.includes("reaction") ? " · AI 리액션 봇은 비울 수 없음" : ""}</div></div>
+    <div class="conn">
+      <div>
+        <div class="st">${b.has_secret ? `<span class="okc">✓ OAuth 파일</span> <span style="color:var(--dim)">프로젝트 …${esc(b.project)} · 오늘 ${b.quota_used.toLocaleString()} 단위</span>` : `<span class="noc">● OAuth 파일 없음</span>`}</div>
+        <div class="row wrap">
+          <button class="btn bup">${b.has_secret ? "파일 바꾸기" : "📄 파일 올리기"}</button>
+          ${others.length ? `<select class="bcopy" style="width:auto"><option value="">다른 봇 파일 같이 쓰기…</option>${others.map(o => `<option value="${o.id}">${esc(o.name)} 의 파일 (할당량 공유)</option>`).join("")}</select>` : ""}
+        </div>
+      </div>
+      <div>
+        <div class="st">${b.has_token ? `<span class="okc">✓ 로그인됨</span> ${b.channel_title ? `— 채널 <b>${esc(b.channel_title)}</b>` : ""}` : `<span class="noc">● 로그인 안 됨</span>`}</div>
+        <div class="row wrap">
+          <button class="btn ${b.has_token ? "" : "primary"} blogin" ${b.has_secret ? "" : "disabled"}>${b.has_token ? "다른 계정으로 다시 로그인" : "구글 로그인"}</button>
+          ${b.has_token ? `<button class="btn link blogout">로그아웃</button>` : ""}
+        </div>
+      </div>
+    </div>`;
+  $$(".rolechips label", d).forEach(l => l.onclick = e => { e.preventDefault(); const i = $("input", l); i.checked = !i.checked; l.classList.toggle("on", i.checked); });
+  $(".bdel", d).onclick = async () => {
+    if (!confirm(`'${b.name}' 봇을 삭제할까요? (이 봇의 로그인 정보도 지워집니다)`)) return;
+    const r = await api(`/api/bots/${b.id}/delete`, {}); toast(r.ok ? r.message : r.error, r.ok ? "" : "err"); loadBots();
+  };
+  $(".bup", d).onclick = () => { uploadFor = b.id; $("#botFile").click(); };
+  const cp = $(".bcopy", d);
+  if (cp) cp.onchange = async () => {
+    if (!cp.value) return;
+    const r = await api(`/api/bots/${b.id}/secret`, { copy_from: cp.value }); toast(r.ok ? r.message : r.error, r.ok ? "ok" : "err"); loadBots();
+  };
+  $(".blogin", d).onclick = async () => {
+    toast(`브라우저가 열립니다. '${b.name}' 에 쓸 봇 계정으로 로그인하고 허용을 누르세요.`);
+    const btn = $(".blogin", d); btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 브라우저에서 로그인 중… (5분 제한)';
+    const r = await api(`/api/bots/${b.id}/login`, {});
+    toast(r.ok ? (r.message || `연결되었습니다 — 채널: ${r.channel}`) : r.error, r.ok ? (r.message ? "" : "ok") : "err");
+    loadBots();
+  };
+  const lo = $(".blogout", d);
+  if (lo) lo.onclick = async () => { const r = await api(`/api/bots/${b.id}/logout`, {}); toast(r.ok ? r.message : r.error, r.ok ? "" : "err"); loadBots(); };
+  return d;
+}
+function renderBots() {
+  const list = $("#botList"); list.innerHTML = "";
+  if (!BOTS.list.length) list.innerHTML = '<div class="card" style="color:var(--muted)">아직 봇이 없습니다. <b>+ 봇 추가</b>로 시작하세요.</div>';
+  BOTS.list.forEach(b => list.appendChild(botCard(b)));
+  const ready = BOTS.list.filter(b => b.ready);
+  $("#readerBot").innerHTML = `<option value="">자동 (로그인된 첫 봇)</option>` + ready.map(b => `<option value="${b.id}" ${BOTS.reader_bot === b.id ? "selected" : ""}>${esc(b.name)}</option>`).join("");
+  $("#readInterval").value = BOTS.read_interval;
+  updateEst();
+  $("#testBot").innerHTML = ready.length ? ready.map(b => `<option value="${b.id}">${esc(b.name)}</option>`).join("") : '<option value="">로그인된 봇 없음</option>';
+  $("#testBtn").disabled = !ready.length;
+  renderQuota(BOTS);
+}
+function updateEst() {
+  const iv = Math.max(3, parseFloat($("#readInterval").value) || 10), perH = Math.round(3600 / iv * 5);
+  $("#readEst").textContent = `시간당 약 ${perH.toLocaleString()} 단위 → 하루 10,000 단위로 약 ${(10000 / perH).toFixed(1)}시간 읽기 (전송분 제외)`;
+}
+$("#readInterval").addEventListener("input", updateEst);
+function renderQuota(b) {
+  const ps = Object.entries(b.projects || {});
+  if (!ps.length) { $("#quotaList").innerHTML = '<span style="color:var(--dim)">OAuth 파일을 올린 봇이 없습니다.</span>'; return; }
+  $("#quotaList").innerHTML = ps.map(([p, v]) => {
+    const pct = Math.min(100, v.used / b.limit * 100);
+    return `<div style="font-size:13px"><b>프로젝트 …${esc(p)}</b> <span style="color:var(--dim)">(${v.bots.map(esc).join(", ")})</span>
+      <span style="float:right">${v.used.toLocaleString()} / ${b.limit.toLocaleString()}</span></div>
+      <div class="qbar"><i class="${pct >= 95 ? "hi" : pct >= 80 ? "mid" : ""}" style="width:${pct}%"></i></div>`;
+  }).join("");
+}
+$("#botFile").onchange = async () => {
+  const f = $("#botFile").files[0]; $("#botFile").value = "";
+  if (!f || !uploadFor) return;
+  if (f.size > 200000) { toast("파일이 너무 큽니다. Google Cloud 에서 받은 JSON 파일인지 확인하세요.", "err"); return; }
+  const r = await api(`/api/bots/${uploadFor}/secret`, { content: await f.text() });
+  toast(r.ok ? r.message : r.error, r.ok ? "ok" : "err"); loadBots();
 };
-$("#logoutBtn").onclick = async () => { const r = await api("/api/youtube/logout", {}); toast(r.ok ? r.message : r.error, r.ok ? "" : "err"); };
+$("#addBot").onclick = async () => {
+  const r = await api("/api/bots/add", {}); if (!r.ok) { toast(r.error, "err"); return; }
+  await loadBots();
+  const last = $$("#botList .botc").pop(); if (last) { last.scrollIntoView({ behavior: "smooth" }); $(".bname", last).select(); }
+};
+function collectBots() {
+  return {
+    bots: $$("#botList .botc").map(d => ({
+      id: d.dataset.id, name: $(".bname", d).value.trim(), label: $(".blabel", d).value,
+      enabled: $(".benabled", d).checked, roles: $$(".rolechips input", d).filter(i => i.checked).map(i => i.value),
+    })),
+    reader_bot: $("#readerBot").value, read_interval: parseFloat($("#readInterval").value) || 10,
+  };
+}
+async function saveBots(quiet = false) {
+  if (!BOTS_LOADED || !BOTS.list.length) return true;
+  const r = await api("/api/bots", collectBots());
+  if (!quiet || !r.ok) toast(r.ok ? r.message : r.error, r.ok ? "ok" : "err");
+  if (!quiet) $("#botSaveMsg").textContent = r.ok ? "✓ " + r.message : "";
+  return r.ok;
+}
+$("#botSave").onclick = async () => { if (await saveBots()) loadBots(false); };
 $("#testBtn").onclick = async () => {
   const url = $("#testUrl").value.trim() || $("#url").value.trim();
   if (!url) { toast("라이브 주소를 입력하세요.", "err"); return; }
-  const btn = $("#testBtn"); btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 보내는 중';
-  const r = await api("/api/youtube/test", { url, text: $("#testText").value });
+  const btn = $("#testBtn"); btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
+  const r = await api(`/api/bots/${$("#testBot").value}/test`, { url, text: $("#testText").value });
   btn.disabled = false; btn.textContent = "보내기";
-  toast(r.ok ? r.message : r.error, r.ok ? "ok" : "err");
+  toast(r.ok ? r.message : r.error, r.ok ? "ok" : "err"); loadBots();
 };
+
+/* ---------- 이벤트 · 참여 ---------- */
+const CF_FIELDS = ["raffle_keyword", "raffle_winners", "raffle_minutes", "raffle_start_msg", "raffle_result_msg", "quiz_seconds",
+  "welcome_enabled", "welcome_interval", "welcome_max_names", "welcome_msg", "quiet_enabled", "quiet_seconds", "quiet_min_gap",
+  "quiet_messages", "ranking_enabled", "ranking_top", "ranking_msg"];
+function quizRow(q = { question: "", answers: [] }) {
+  const d = document.createElement("div"); d.className = "quizrow";
+  d.innerHTML = `<input type="text" class="qq" placeholder="문제 (예: 우리 방송 이름은?)"><input type="text" class="qa" placeholder="정답 (여러 개면 쉼표로)"><button class="btn ghost">삭제</button>`;
+  $(".qq", d).value = q.question; $(".qa", d).value = (q.answers || []).join(", ");
+  $("button", d).onclick = () => d.remove();
+  return d;
+}
+async function loadEvents() {
+  const r = await api("/api/community");
+  if (!r.ok) { toast(r.error, "err"); return; }
+  const c = r.config;
+  CF_FIELDS.forEach(k => {
+    const el = $("#cf-" + k); if (!el) return;
+    if (el.type === "checkbox") el.checked = !!c[k];
+    else if (k === "quiet_messages") el.value = (c[k] || []).join("\n");
+    else el.value = c[k];
+  });
+  const ql = $("#quizList"); ql.innerHTML = ""; (c.quizzes || []).forEach(q => ql.appendChild(quizRow(q)));
+}
+$("#addQuiz").onclick = () => { const d = quizRow(); $("#quizList").appendChild(d); $(".qq", d).focus(); };
+$("#evSave").onclick = async () => {
+  const body = {};
+  CF_FIELDS.forEach(k => {
+    const el = $("#cf-" + k); if (!el) return;
+    body[k] = el.type === "checkbox" ? el.checked : el.type === "number" ? parseFloat(el.value) : k === "quiet_messages" ? el.value.split("\n") : el.value;
+  });
+  body.quizzes = $$("#quizList .quizrow").map(d => ({ question: $(".qq", d).value.trim(), answers: $(".qa", d).value.split(",").map(s => s.trim()).filter(Boolean) }))
+    .filter(q => q.question);
+  const r = await api("/api/community", body);
+  toast(r.ok ? r.message : r.error, r.ok ? "ok" : "err");
+  $("#evSaveMsg").textContent = r.ok ? "✓ " + r.message : "";
+};
+$$("#evLive button[data-act]").forEach(b => b.onclick = async () => {
+  const r = await api("/api/community/" + b.dataset.act, {});
+  toast(r.ok ? r.message : r.error, r.ok ? "" : "err");
+});
+function renderEventsLive(s) {
+  const c = s.community, on = !!c;
+  $$("#evLive button[data-act]").forEach(b => b.disabled = !on);
+  $("#evReading").textContent = !s.running ? "방송을 시작하면 사용할 수 있습니다"
+    : !c ? "이벤트 기능이 꺼져 있습니다 (채팅 전송 방식 또는 설정 확인)"
+    : c.reading ? `채팅 읽는 중${s.reader === "slow" ? " (할당량 80% — 느리게)" : s.reader === "stopped" ? " (중단됨 — 할당량/채팅 종료)" : ""}`
+    : "⚠ 채팅 읽기 꺼짐 — 로그인된 봇이 없어 추첨 참여·정답·환영을 확인할 수 없습니다";
+  $("#evPeople").textContent = on ? c.participants + "명" : "—";
+  $("#evMsgs").textContent = on ? c.messages + "개" : "—";
+  $("#evRaffle").textContent = on && c.raffle ? `'${c.raffle.keyword}' 참여 ${c.raffle.entries}명${c.raffle.remaining != null ? ` · ${Math.max(0, c.raffle.remaining)}초 남음` : ""}` : "—";
+  $("#evQuiz").textContent = on && c.quiz ? `${c.quiz.question} · ${Math.max(0, c.quiz.remaining)}초` : "—";
+  $("#evTop").innerHTML = on && c.top.length ? c.top.map((t, i) => `<span>${i + 1}. ${esc(t.name)} (${t.count})</span>`).join("") : "";
+}
 
 /* ---------- 음성 명령 ---------- */
 let CMD_MAX = 190;

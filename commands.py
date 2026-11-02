@@ -32,7 +32,22 @@ YT_MAX_LEN = 190             # 유튜브 한도 200자 — 이모지가 2글자�
 PART_GAP_SECONDS = 1.5      # 나눠 보낼 때 메시지 사이 간격
 ARM_SECONDS = 8.0           # 호출어만 들렸을 때 다음 말을 기다리는 시간 (방송 시간 기준)
 
+ACTIONS = {
+    "message": "내용 전송",
+    "raffle_start": "추첨 시작",
+    "raffle_end": "추첨 마감·발표",
+    "quiz": "퀴즈 내기",
+    "ranking": "채팅 순위 발표",
+}
+ACTION_COMMANDS = [
+    {"name": "추첨 시작", "triggers": ["추첨 시작", "이벤트 시작"], "cooldown": 10, "action": "raffle_start"},
+    {"name": "추첨 마감", "triggers": ["추첨 마감", "이벤트 마감", "당첨자 발표"], "cooldown": 10, "action": "raffle_end"},
+    {"name": "퀴즈", "triggers": ["퀴즈", "퀴즈 내줘"], "cooldown": 10, "action": "quiz"},
+    {"name": "순위", "triggers": ["채팅 순위", "순위 발표"], "cooldown": 60, "action": "ranking"},
+]
+
 DEFAULT_COMMANDS = {
+    "version": 2,
     "enabled": True,
     "wake_words": ["히든아", "이든아", "히든야"],   # 자주 잘못 들리는 발음도 함께 등록
     "commands": [
@@ -40,6 +55,7 @@ DEFAULT_COMMANDS = {
          "message": "📋 오늘의 메뉴판\n1. 노래 신청 — 1,000원\n2. 게임 같이하기 — 5,000원\n3. 소원 들어주기 — 10,000원"},
         {"name": "공지", "triggers": ["공지", "공지사항"], "cooldown": 30,
          "message": "📢 방송 시간: 매주 월·수·금 저녁 8시 / 문의는 커뮤니티 탭으로!"},
+        *[{**d, "message": ""} for d in ACTION_COMMANDS],
     ],
 }
 
@@ -100,6 +116,7 @@ class Command:
     triggers: list[str]
     message: str
     cooldown: float = 30.0
+    action: str = "message"        # message(내용 전송) | raffle_start | raffle_end | quiz | ranking
 
     def parts(self, label: str = "") -> list[str]:
         return split_message(self.message, label)
@@ -118,13 +135,20 @@ class CommandSet:
             name = str(c.get("name", "")).strip()
             triggers = [t.strip() for t in (c.get("triggers") or []) if str(t).strip()]
             msg = str(c.get("message", "")).strip()
-            if name and msg:
-                cmds.append(Command(name, triggers or [name], msg, float(c.get("cooldown", 30) or 30)))
+            action = str(c.get("action") or "message")
+            if action not in ACTIONS:
+                action = "message"
+            if name and (msg or action != "message"):
+                cmds.append(Command(name, triggers or [name], msg, float(c.get("cooldown", 30) or 30), action))
         wakes = [w.strip() for w in (d.get("wake_words") or []) if str(w).strip()]
-        return cls(bool(d.get("enabled", True)), wakes, cmds)
+        cs = cls(bool(d.get("enabled", True)), wakes, cmds)
+        cs.version = int(d.get("version", 1) or 1)
+        return cs
+
+    version: int = 2
 
     def to_dict(self) -> dict:
-        return {"enabled": self.enabled, "wake_words": self.wake_words,
+        return {"version": 2, "enabled": self.enabled, "wake_words": self.wake_words,
                 "commands": [asdict(c) for c in self.commands]}
 
     @classmethod
@@ -135,7 +159,15 @@ class CommandSet:
                 p.write_text(json.dumps(DEFAULT_COMMANDS, ensure_ascii=False, indent=2), encoding="utf-8")
                 return cls.from_dict(DEFAULT_COMMANDS)
             return cls()
-        return cls.from_dict(json.loads(p.read_text(encoding="utf-8")))
+        cs = cls.from_dict(json.loads(p.read_text(encoding="utf-8")))
+        if cs.version < 2:                      # 이전 버전 파일 → 이벤트·순위 명령을 한 번만 추가
+            names = {c.name for c in cs.commands}
+            for d in ACTION_COMMANDS:
+                if d["name"] not in names:
+                    cs.commands.append(Command(d["name"], d["triggers"], "", d["cooldown"], d["action"]))
+            cs.version = 2
+            cs.save(p)
+        return cs
 
     def save(self, path: str | Path) -> None:
         p = Path(path)
@@ -276,8 +308,9 @@ class CommandRunner:
     """
 
     def __init__(self, cs: CommandSet, publisher=None, real: bool = False, label: str = "",
-                 counter=None, max_per_day: int = 100):
+                 counter=None, max_per_day: int = 100, actions: Optional[dict] = None):
         self.cs = cs
+        self.actions = actions or {}        # 동작 이름 → 실행 함수 (반환: 화면에 보여 줄 결과 문구)
         self.matcher = CommandMatcher(cs)
         self.publisher, self.real, self.label = publisher, real, label
         self.counter, self.max_per_day = counter, max_per_day
@@ -307,6 +340,15 @@ class CommandRunner:
             self.stats["skipped"] += 1
             log.warning("📢 [%s] 방금 보냈습니다 — %.0f초 뒤에 다시 보낼 수 있습니다", name, wait)
             return f"방금 보냈습니다. {wait:.0f}초 뒤에 다시 보낼 수 있습니다."
+        if cmd.action != "message":
+            fn = self.actions.get(cmd.action)
+            if fn is None:
+                log.warning("📢 [%s] '%s' 기능이 꺼져 있습니다 (이벤트 설정 확인)", name, ACTIONS.get(cmd.action))
+                return f"'{ACTIONS.get(cmd.action)}' 기능을 쓸 수 없습니다."
+            self._last_fired[name] = now
+            result = fn()
+            log.info("🎯 [%s] %s ← %s", name, result, source)
+            return "ok"
         parts = cmd.parts(self.label)
         if self.real and self.counter is not None and self.counter.value() + len(parts) > self.max_per_day:
             self.stats["skipped"] += 1
@@ -324,7 +366,7 @@ class CommandRunner:
                 log.info("📢 [%s] %d/%d (화면 모드 — 전송 안 함) ← %s :: %s", cmd.name, i, len(parts), source, p)
             return
         for i, p in enumerate(parts, 1):
-            ok = await self.publisher.send_direct(p)
+            ok = await self.publisher.send_direct(p, labeled=False)   # 표기는 parts 에 이미 포함
             if not ok:
                 log.error("📢 [%s] %d/%d 전송 실패 — 나머지는 보내지 않습니다", cmd.name, i, len(parts))
                 return

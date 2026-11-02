@@ -14,3 +14,10 @@ update/
 *.tmp
 smoke/
 pkg/
+# 봇 계정 로그인 정보·OAuth 파일 (절대 올리지 않음)
+bots/
+bots.json
+commands.json
+community.json
+.community_state.json
+.quota.json

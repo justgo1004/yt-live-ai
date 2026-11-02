@@ -30,7 +30,7 @@ echo [3/5] exe 만들기 (가장 오래 걸립니다)
 if exist "dist\YouTubeLiveAI.exe" del /q "dist\YouTubeLiveAI.exe"
 pyinstaller --noconfirm --clean --onefile --windowed --name YouTubeLiveAI ^
   --add-data "ui;ui" --collect-submodules deepgram ^
-  --hidden-import main --hidden-import live_stt --hidden-import reaction --hidden-import chat_sender --hidden-import commands --hidden-import updater --hidden-import version ^
+  --hidden-import main --hidden-import live_stt --hidden-import reaction --hidden-import chat_sender --hidden-import commands --hidden-import updater --hidden-import version --hidden-import bots --hidden-import community --hidden-import chat_reader --hidden-import quota ^
   app.py
 if not exist "dist\YouTubeLiveAI.exe" goto :fail
 
@@ -61,6 +61,9 @@ if exist "client_secret.json" copy "client_secret.json" "%OUT%\" >nul
 if exist "token.json" copy "token.json" "%OUT%\" >nul
 if exist ".chat_state.json" copy ".chat_state.json" "%OUT%\" >nul
 if exist "commands.json" copy "commands.json" "%OUT%\" >nul
+if exist "bots.json" copy "bots.json" "%OUT%\" >nul
+if exist "community.json" copy "community.json" "%OUT%\" >nul
+if exist "bots" xcopy /e /i /q /y "bots" "%OUT%\bots" >nul
 
 echo.
 echo ================================================

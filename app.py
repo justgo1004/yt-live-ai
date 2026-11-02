@@ -41,6 +41,10 @@ CLIENT_SECRET = BASE / "client_secret.json"
 TOKEN = BASE / "token.json"
 CHAT_STATE = BASE / ".chat_state.json"
 COMMANDS_FILE = BASE / "commands.json"
+BOTS_FILE = BASE / "bots.json"
+COMMUNITY_FILE = BASE / "community.json"
+COMMUNITY_STATE = BASE / ".community_state.json"
+QUOTA_FILE = BASE / ".quota.json"
 LOG_DIR = BASE / "logs"
 APP_ID = "yt-live-ai"
 DEFAULT_PORT = int(os.environ.get("LIVEAI_PORT", "8765"))
@@ -58,6 +62,10 @@ from pydantic import ValidationError         # noqa: E402
 import chat_sender                            # noqa: E402
 import commands as voice_cmd                  # noqa: E402
 import updater                                # noqa: E402
+import bots as bots_mod                       # noqa: E402
+import community as community_mod             # noqa: E402
+import quota as quota_mod                     # noqa: E402
+from dataclasses import asdict                # noqa: E402
 from version import __version__               # noqa: E402
 import live_stt                               # noqa: E402
 import main as core                           # noqa: E402
@@ -140,6 +148,8 @@ def build_settings(values: dict[str, str]) -> tuple[Optional[core.Settings], dic
 def _with_paths(s: core.Settings) -> core.Settings:
     s.chat_state_file, s.yt_client_secret, s.yt_token_file = str(CHAT_STATE), str(CLIENT_SECRET), str(TOKEN)
     s.commands_file = str(COMMANDS_FILE)
+    s.bots_file, s.community_file = str(BOTS_FILE), str(COMMUNITY_FILE)
+    s.community_state_file, s.quota_file = str(COMMUNITY_STATE), str(QUOTA_FILE)
     return s
 
 
@@ -186,8 +196,6 @@ class AppState:
         self.detail = ""            # connecting / receiving / reconnecting
         self.started_at: Optional[float] = None
         self.counts = {"stt": 0, "reactions": 0}
-        self.channel: Optional[str] = None
-        self.channel_error: Optional[str] = None
         self.login_busy = False
         self.quit = asyncio.Event()
         self.update = {"current": __version__, "latest": None, "available": False, "notes": "", "page": "",
@@ -202,6 +210,7 @@ class AppState:
 state: AppState  # serve() 에서 생성 (이벤트 루프 안에서 만들어야 함)
 
 
+_BOT_RE = re.compile(r"📣 \[(.+?)\] (전송됨|\(화면 모드 — 전송 안 함\)|전송 실패|\(화면에만 표시\)) :: (.*)$", re.S)
 _CMD_RE = re.compile(r"📢 \[(.+?)\] (\d+)/(\d+) (전송됨|\(화면 모드 — 전송 안 함\)) ← (.*?) :: (.*)$", re.S)
 
 
@@ -222,6 +231,17 @@ class UiLogHandler(logging.Handler):
                 state.counts["reactions"] += 1
                 ev.update(kind="reaction", mood=getattr(record, "label", ""),
                           pos=live_stt._hms(getattr(record, "src_offset", 0.0)))
+            elif name == "live_stt.chat_in":
+                ev.update(kind="chat", author=getattr(record, "author", ""), owner=bool(getattr(record, "owner", False)),
+                          text=msg.split(": ", 1)[-1])
+            elif name == "live_stt.main" and msg.startswith("📣"):
+                m = _BOT_RE.match(msg)
+                if m:
+                    ev.update(kind="botmsg", bot=m[1], real=m[2] == "전송됨", note=m[2], text=m[3])
+                else:
+                    ev["kind"] = "info"
+            elif name == "live_stt.command" and msg.startswith("🎯"):
+                ev.update(kind="action")
             elif name == "live_stt.command":
                 m = _CMD_RE.match(msg)
                 if m:
@@ -235,7 +255,8 @@ class UiLogHandler(logging.Handler):
                 return                                      # 아래 📤 줄과 중복
             elif name.startswith("live_stt.chat") and msg.startswith("📤"):
                 text = msg.split("): ", 1)[-1]
-                ev.update(kind="sent", text=text, real=state.mode == "youtube-api")
+                bm = re.match(r"📤 \[(.+?)\]", msg)
+                ev.update(kind="sent", text=text, real=state.mode == "youtube-api", bot=bm[1] if bm else "")
             else:
                 ev["kind"] = "error" if record.levelno >= logging.ERROR else \
                     "warn" if record.levelno >= logging.WARNING else "info"
@@ -289,6 +310,7 @@ def setup_logging() -> None:
 def snapshot() -> dict:
     env = read_env()
     s, errors = build_settings(env)
+    bots = bots_snapshot()
     pub = state.orch.publisher if state.orch else None
     today = pub.daily.value() if pub else chat_sender.DailyCounter(str(CHAT_STATE)).value()
     next_in = max(0.0, pub._next_allowed - time.monotonic()) if pub else 0.0
@@ -313,11 +335,17 @@ def snapshot() -> dict:
             "groq": bool(env.get("GROQ_API_KEY") or env.get("DEEPGRAM_API_KEY")),
             "anthropic": bool(env.get("ANTHROPIC_API_KEY")),
             "ffmpeg": bool(shutil.which("ffmpeg")),
-            "client_secret": CLIENT_SECRET.exists(),
-            "token": TOKEN.exists(),
-            "channel": state.channel, "channel_error": state.channel_error,
+            "token": bots["any_ready"],
             "login_busy": state.login_busy,
         },
+        "bots": bots,
+        "pubs": [{"bot": p.bot_name, "real": p.sender.name != "console", "enabled": p.enabled,
+                  "sent": p.sent_this_stream, "direct": p.stats.get("direct", 0),
+                  "next_in": round(max(0.0, p._next_allowed - time.monotonic()))}
+                 for p in (state.orch.publishers.values() if state.running and state.orch else [])],
+        "community": state.orch.community.snapshot() if state.running and state.orch and state.orch.community else None,
+        "reader": (state.orch.reader.status if getattr(state.orch.reader, "status", None) else "running")
+        if state.running and state.orch and state.orch.reader else None,
         "settings_errors": errors,
         "update": state.update,
         "commands": {
@@ -439,8 +467,8 @@ async def h_start(req) -> web.Response:
             return fail("유튜브 주소가 아닌 것 같습니다. 예: https://www.youtube.com/watch?v=...")
     if not shutil.which("ffmpeg"):
         return fail("ffmpeg.exe 를 찾을 수 없습니다. YouTubeLiveAI.exe 와 같은 폴더에 ffmpeg.exe 가 있어야 합니다.")
-    if mode == "youtube-api" and not TOKEN.exists():
-        return fail("실제 전송을 하려면 먼저 [유튜브 연결]에서 로그인하세요.")
+    if mode == "youtube-api" and not any(b.ready(BASE) for b in load_registry().bots):
+        return fail("실제 전송을 하려면 먼저 [봇 관리]에서 봇 계정으로 로그인하세요.")
     if mode not in ("console", "youtube-api"):
         mode = "console"
     if body.get("reactions") is False:
@@ -484,69 +512,229 @@ async def h_stop(_req) -> web.Response:
     return ok(force=state.orch.signals >= 2)
 
 
-async def h_client_secret(req) -> web.Response:
+# ─────────────────────────────────────────────────────────────────────────────
+# 봇 관리 (여러 유튜브 계정)
+# ─────────────────────────────────────────────────────────────────────────────
+def load_registry() -> bots_mod.BotRegistry:
+    env = read_env()
+    return bots_mod.BotRegistry.load(BOTS_FILE, "client_secret.json", "token.json",
+                                     env.get("CHAT_LABEL", "🤖AI: ") or "🤖AI: ")
+
+
+def _bot_view(reg: bots_mod.BotRegistry, b: bots_mod.Bot) -> dict:
+    cs = b.cs_path(BASE)
+    proj = quota_mod.project_key(cs) if cs.exists() else ""
+    return {**asdict(b), "has_secret": cs.exists(), "has_token": b.token_path(BASE).exists(),
+            "ready": b.ready(BASE), "project": proj[-6:] if proj else "",
+            "quota_used": quota_mod.meter(QUOTA_FILE).get(proj) if proj else 0}
+
+
+def bots_snapshot() -> dict:
+    try:
+        reg = load_registry()
+    except (OSError, ValueError) as e:
+        return {"list": [], "error": str(e)}
+    views = [_bot_view(reg, b) for b in reg.bots]
+    projects: dict[str, dict] = {}
+    for v in views:
+        if v["project"]:
+            p = projects.setdefault(v["project"], {"used": v["quota_used"], "bots": []})
+            p["bots"].append(v["name"])
+    rb = reg.reader()
+    return {"list": views, "reader_bot": reg.reader_bot, "read_interval": reg.read_interval,
+            "reader_name": rb.name if rb else None, "projects": projects,
+            "limit": quota_mod.DAILY_LIMIT, "any_ready": any(v["ready"] for v in views),
+            "login_busy": state.login_busy}
+
+
+def _find_bot(req) -> tuple[bots_mod.BotRegistry, Optional[bots_mod.Bot]]:
+    reg = load_registry()
+    return reg, reg.get(req.match_info["bot_id"])
+
+
+async def h_bots(_req) -> web.Response:
+    return web.json_response({"ok": True, **bots_snapshot(), "roles": bots_mod.ROLES})
+
+
+async def h_bots_save(req) -> web.Response:
+    """이름·역할·표기·사용 여부·채팅 읽기 설정 저장 (OAuth 파일·로그인은 각 버튼으로 따로)."""
+    if state.running:
+        return fail("방송 처리 중에는 봇 설정을 바꿀 수 없습니다. 먼저 중지하세요.")
     body = await req.json()
+    reg = load_registry()
+    by_id = {b["id"]: b for b in body.get("bots", [])}
+    for b in reg.bots:
+        d = by_id.get(b.id)
+        if d:
+            b.name = str(d.get("name", b.name)).strip()
+            b.roles = [r for r in d.get("roles", []) if r in bots_mod.ROLES]
+            b.label = str(d.get("label", b.label)).replace("\n", " ")
+            b.enabled = bool(d.get("enabled", True))
+    reg.reader_bot = str(body.get("reader_bot", reg.reader_bot) or "")
     try:
-        data = json.loads(body.get("content") or "")
+        reg.read_interval = float(body.get("read_interval", reg.read_interval))
+    except (TypeError, ValueError):
+        return fail("채팅 읽기 간격은 숫자로 입력하세요.")
+    errs = reg.validate()
+    if errs:
+        return fail(" / ".join(errs))
+    reg.save()
+    return ok(message="봇 설정을 저장했습니다.")
+
+
+async def h_bot_add(_req) -> web.Response:
+    reg = load_registry()
+    if len(reg.bots) >= 6:
+        return fail("봇은 최대 6개까지 만들 수 있습니다.")
+    bid = reg.new_id()
+    used = {r for b in reg.bots for r in b.roles}
+    free = [r for r in bots_mod.ROLES if r not in used][:1]
+    reg.bots.append(bots_mod.Bot(bid, f"새 봇 {bid[3:]}", free, "🤖 "))
+    (BASE / "bots" / bid).mkdir(parents=True, exist_ok=True)
+    reg.save()
+    return ok(id=bid)
+
+
+async def h_bot_delete(req) -> web.Response:
+    if state.running:
+        return fail("방송 처리 중에는 봇을 삭제할 수 없습니다.")
+    reg, b = _find_bot(req)
+    if not b:
+        return fail("없는 봇입니다.", 404)
+    if b.token_path(BASE).exists() and b.token_path(BASE).parent.name == b.id:
+        b.token_path(BASE).unlink(missing_ok=True)            # 로그인 정보만 지움 (OAuth 파일은 남김)
+    reg.bots.remove(b)
+    if reg.reader_bot == b.id:
+        reg.reader_bot = ""
+    reg.save()
+    return ok(message=f"'{b.name}' 을(를) 삭제했습니다.")
+
+
+def _validate_secret(content: str) -> tuple[Optional[dict], Optional[str]]:
+    try:
+        data = json.loads(content or "")
     except json.JSONDecodeError:
-        return fail("JSON 파일이 아닙니다. Google Cloud 에서 받은 파일을 그대로 올려 주세요.")
+        return None, "JSON 파일이 아닙니다. Google Cloud 에서 받은 파일을 그대로 올려 주세요."
     if "web" in data and "installed" not in data:
-        return fail("'웹 애플리케이션' 유형의 파일입니다. OAuth 클라이언트를 '데스크톱 앱' 유형으로 다시 만들어 주세요.")
+        return None, "'웹 애플리케이션' 유형의 파일입니다. OAuth 클라이언트를 '데스크톱 앱' 유형으로 다시 만들어 주세요."
     if "installed" not in data or "client_id" not in data.get("installed", {}):
-        return fail("OAuth 클라이언트 파일이 아닙니다. '사용자 인증 정보 → OAuth 클라이언트 ID → 데스크톱 앱'에서 받은 JSON 을 올려 주세요.")
-    CLIENT_SECRET.write_text(json.dumps(data), encoding="utf-8")
-    return ok(message="OAuth 파일을 저장했습니다. 이제 구글 로그인을 하세요.")
+        return None, "OAuth 클라이언트 파일이 아닙니다. '사용자 인증 정보 → OAuth 클라이언트 ID → 데스크톱 앱'의 JSON 을 올려 주세요."
+    return data, None
 
 
-async def _refresh_channel() -> None:
+async def h_bot_secret(req) -> web.Response:
+    reg, b = _find_bot(req)
+    if not b:
+        return fail("없는 봇입니다.", 404)
+    body = await req.json()
+    if body.get("copy_from"):                                 # 다른 봇과 같은 프로젝트(할당량 공유)
+        src = reg.get(body["copy_from"])
+        if not src or not src.cs_path(BASE).exists():
+            return fail("복사할 OAuth 파일이 없습니다.")
+        content = src.cs_path(BASE).read_text(encoding="utf-8")
+    else:
+        content = body.get("content") or ""
+    data, err = _validate_secret(content)
+    if err:
+        return fail(err)
+    path = BASE / "bots" / b.id / "client_secret.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    old_project = quota_mod.project_key(b.cs_path(BASE)) if b.cs_path(BASE).exists() else None
+    path.write_text(json.dumps(data), encoding="utf-8")
+    b.client_secret = f"bots/{b.id}/client_secret.json"
+    if old_project and old_project != quota_mod.project_key(path):
+        b.token_path(BASE).unlink(missing_ok=True)            # 프로젝트가 바뀌면 다시 로그인 필요
+        b.channel_title = b.channel_id = ""
+    reg.save()
+    shared = [x.name for x in reg.bots if x is not b and x.cs_path(BASE).exists()
+              and quota_mod.project_key(x.cs_path(BASE)) == quota_mod.project_key(path)]
+    note = f" ({', '.join(shared)} 와(과) 같은 프로젝트 — 하루 할당량을 함께 씁니다)" if shared else ""
+    return ok(message="OAuth 파일을 저장했습니다. 이제 이 봇으로 구글 로그인을 하세요." + note)
+
+
+async def _refresh_bot_channel(bot_id: str) -> Optional[str]:
+    reg = load_registry()
+    b = reg.get(bot_id)
+    if not b or not b.ready(BASE):
+        return "로그인되어 있지 않습니다."
     try:
-        state.channel = await asyncio.to_thread(chat_sender.fetch_channel_title, str(CLIENT_SECRET), str(TOKEN))
-        state.channel_error = None
+        title, cid = await asyncio.to_thread(chat_sender.fetch_channel_info, str(b.cs_path(BASE)),
+                                             str(b.token_path(BASE)), quota_mod.meter(QUOTA_FILE))
     except Exception as e:
-        state.channel, state.channel_error = None, f"{e}"
+        return str(e)
+    reg = load_registry()                                      # 그 사이 바뀌었을 수 있어 다시 읽음
+    b = reg.get(bot_id)
+    if b:
+        b.channel_title, b.channel_id = title, cid
+        reg.save()
+    return None
 
 
-async def h_login(_req) -> web.Response:
-    if not CLIENT_SECRET.exists():
-        return fail("먼저 2단계에서 OAuth 파일(client_secret.json)을 올려 주세요.")
+async def h_bot_login(req) -> web.Response:
+    reg, b = _find_bot(req)
+    if not b:
+        return fail("없는 봇입니다.", 404)
+    if not b.cs_path(BASE).exists():
+        return fail("먼저 이 봇의 OAuth 파일을 올려 주세요.")
     if state.login_busy:
-        return fail("로그인 창이 이미 열려 있습니다. 브라우저에서 로그인을 마쳐 주세요.", 409)
+        return fail("다른 로그인 창이 열려 있습니다. 브라우저에서 로그인을 마쳐 주세요.", 409)
     state.login_busy = True
+    tok = BASE / "bots" / b.id / "token.json"
     try:
-        await asyncio.to_thread(chat_sender.load_credentials, str(CLIENT_SECRET), str(TOKEN), True)
+        tok.parent.mkdir(parents=True, exist_ok=True)
+        tok.unlink(missing_ok=True)                            # 다른 계정으로 다시 로그인할 수 있게
+        await asyncio.to_thread(chat_sender.load_credentials, str(b.cs_path(BASE)), str(tok), True)
     except Exception as e:
         return fail(f"로그인에 실패했습니다: {e}")
     finally:
         state.login_busy = False
-    await _refresh_channel()
-    if state.channel_error:
-        return fail(f"로그인은 됐지만 채널 정보를 가져오지 못했습니다: {state.channel_error}")
-    return ok(channel=state.channel)
+    reg = load_registry()
+    b = reg.get(b.id)
+    b.token = f"bots/{b.id}/token.json"
+    reg.save()
+    err = await _refresh_bot_channel(b.id)
+    if err:
+        return fail(f"로그인은 됐지만 채널 정보를 가져오지 못했습니다: {err}")
+    b = load_registry().get(b.id)
+    others = [x.name for x in load_registry().bots if x.id != b.id and x.channel_id and x.channel_id == b.channel_id]
+    if others:
+        return ok(channel=b.channel_title, message=f"주의: {', '.join(others)} 와(과) 같은 유튜브 계정입니다. "
+                                                   "역할별로 다른 이름을 보이려면 봇마다 다른 계정으로 로그인하세요.")
+    return ok(channel=b.channel_title)
 
 
-async def h_logout(_req) -> web.Response:
+async def h_bot_logout(req) -> web.Response:
     if state.running and state.mode == "youtube-api":
         return fail("실제 전송 중에는 로그아웃할 수 없습니다. 먼저 중지하세요.")
-    TOKEN.unlink(missing_ok=True)
-    state.channel = state.channel_error = None
-    return ok(message="로그아웃했습니다.")
+    reg, b = _find_bot(req)
+    if not b:
+        return fail("없는 봇입니다.", 404)
+    b.token_path(BASE).unlink(missing_ok=True)
+    b.channel_title = b.channel_id = ""
+    reg.save()
+    return ok(message=f"'{b.name}' 로그아웃했습니다.")
 
 
-async def h_send_test(req) -> web.Response:
+async def h_bot_test(req) -> web.Response:
+    reg, b = _find_bot(req)
+    if not b:
+        return fail("없는 봇입니다.", 404)
     body = await req.json()
     url, text = (body.get("url") or "").strip(), (body.get("text") or "").strip() or "테스트 메시지입니다"
-    if not TOKEN.exists():
-        return fail("먼저 구글 로그인을 하세요.")
+    if not b.ready(BASE):
+        return fail("먼저 이 봇으로 구글 로그인을 하세요.")
     if not YOUTUBE_URL.search(url):
         return fail("유튜브 라이브 주소를 입력하세요.")
-    s, errors = build_settings(read_env())
+    s, _ = build_settings(read_env())
     if not s:
         return fail("설정에 오류가 있습니다. [설정] 화면을 확인하세요.")
-    daily = chat_sender.DailyCounter(str(CHAT_STATE))
-    if daily.value() >= s.chat_max_per_day:
-        return fail(f"오늘 전송 한도({s.chat_max_per_day}건)에 도달했습니다.")
-    sender = chat_sender.YouTubeApiSender(url, str(CLIENT_SECRET), str(TOKEN))
-    msg = (s.chat_label + text)[: chat_sender.YT_MAX_LEN]
+    daily = chat_sender.DailyCounter(str(b.state_path(BASE)) + ".direct")
+    if daily.value() >= chat_sender.SafeChatPublisher.DIRECT_MAX_PER_DAY:
+        return fail("이 봇의 오늘 전송 한도에 도달했습니다.")
+    b.state_path(BASE).parent.mkdir(parents=True, exist_ok=True)
+    sender = chat_sender.YouTubeApiSender(url, str(b.cs_path(BASE)), str(b.token_path(BASE)),
+                                          quota=quota_mod.meter(QUOTA_FILE))
+    msg = (b.label + text)[: chat_sender.YT_MAX_LEN]
     try:
         await sender.start()
         await sender.send(msg)
@@ -555,8 +743,53 @@ async def h_send_test(req) -> web.Response:
     finally:
         await sender.close()
     daily.increment()
-    hub.publish({"type": "log", "kind": "sent", "text": msg, "real": True})
-    return ok(message=f"전송했습니다: {msg}")
+    hub.publish({"type": "log", "kind": "botmsg", "bot": b.name, "text": msg, "real": True})
+    return ok(message=f"[{b.name}] 전송했습니다: {msg}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 이벤트 · 참여 유도
+# ─────────────────────────────────────────────────────────────────────────────
+async def h_get_community(_req) -> web.Response:
+    try:
+        cfg = community_mod.CommunityConfig.load(COMMUNITY_FILE)
+    except (OSError, ValueError) as e:
+        return fail(f"community.json 을 읽지 못했습니다: {e}")
+    return web.json_response({"ok": True, "config": cfg.to_dict()})
+
+
+async def h_save_community(req) -> web.Response:
+    body = await req.json()
+    try:
+        cfg = community_mod.CommunityConfig.from_dict(body)
+    except (TypeError, ValueError) as e:
+        return fail(f"입력값을 확인하세요: {e}")
+    errs = cfg.validate()
+    if errs:
+        return fail(" / ".join(errs))
+    cfg.save(COMMUNITY_FILE)
+    if state.running and state.orch and state.orch.community:
+        state.orch.community.cfg = cfg                         # 진행 중인 방송에도 바로 적용
+        return ok(message="저장했습니다. 진행 중인 방송에도 바로 적용됩니다.")
+    return ok(message="저장했습니다.")
+
+
+async def h_community_action(req) -> web.Response:
+    hubc = state.orch.community if state.running and state.orch else None
+    if not hubc:
+        return fail("방송을 시작한 뒤에 사용할 수 있습니다.")
+    action = req.match_info["action"]
+    fn = {"raffle_start": hubc.raffle_start, "raffle_end": hubc.raffle_end,
+          "quiz": hubc.quiz_start, "ranking": hubc.ranking}.get(action)
+    if not fn:
+        return fail("알 수 없는 동작입니다.", 404)
+    result = fn()
+    logging.getLogger("live_stt.command").info("🎯 [%s] %s ← 버튼", commands_label(action), result)
+    return ok(message=result)
+
+
+def commands_label(action: str) -> str:
+    return voice_cmd.ACTIONS.get(action, action)
 
 
 async def h_preview(req) -> web.Response:
@@ -804,8 +1037,12 @@ async def serve() -> None:
         web.get("/", h_index), web.get("/api/ping", h_ping), web.get("/api/state", h_state),
         web.get("/api/settings", h_get_settings), web.post("/api/settings", h_save_settings),
         web.post("/api/start", h_start), web.post("/api/stop", h_stop),
-        web.post("/api/youtube/client-secret", h_client_secret), web.post("/api/youtube/login", h_login),
-        web.post("/api/youtube/logout", h_logout), web.post("/api/youtube/test", h_send_test),
+        web.get("/api/bots", h_bots), web.post("/api/bots", h_bots_save), web.post("/api/bots/add", h_bot_add),
+        web.post("/api/bots/{bot_id}/delete", h_bot_delete), web.post("/api/bots/{bot_id}/secret", h_bot_secret),
+        web.post("/api/bots/{bot_id}/login", h_bot_login), web.post("/api/bots/{bot_id}/logout", h_bot_logout),
+        web.post("/api/bots/{bot_id}/test", h_bot_test),
+        web.get("/api/community", h_get_community), web.post("/api/community", h_save_community),
+        web.post("/api/community/{action}", h_community_action),
         web.post("/api/preview", h_preview), web.post("/api/quit", h_quit),
         web.post("/api/open-folder", h_open_folder), web.get("/ws", h_ws),
         web.post("/api/update/check", h_update_check), web.post("/api/update/install", h_update_install),
@@ -818,8 +1055,12 @@ async def serve() -> None:
     url = f"http://127.0.0.1:{port}/"
     log.info("앱 시작 v%s — %s (데이터 폴더: %s)", __version__, url, BASE)
     bg = [asyncio.create_task(ticker()), asyncio.create_task(watchdog()), asyncio.create_task(update_loop())]
-    if TOKEN.exists():
-        bg.append(asyncio.create_task(_refresh_channel()))
+    try:                                                       # 채널 이름이 비어 있는 로그인된 봇 → 채워 넣기
+        for b in load_registry().bots:
+            if b.ready(BASE) and not b.channel_title:
+                bg.append(asyncio.create_task(_refresh_bot_channel(b.id)))
+    except (OSError, ValueError) as e:
+        log.warning("bots.json 을 읽지 못했습니다: %s", e)
     if "--after-update" in sys.argv:
         # 업데이트 직후: 기존 창이 자동으로 다시 연결된다. 15초 안에 연결이 없으면 새 창을 연다.
         async def fallback_window() -> None:

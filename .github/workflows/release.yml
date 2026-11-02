@@ -55,6 +55,7 @@ jobs:
           --add-data "ui;ui" --collect-submodules deepgram
           --hidden-import main --hidden-import live_stt --hidden-import reaction --hidden-import chat_sender
           --hidden-import commands --hidden-import updater --hidden-import version
+          --hidden-import bots --hidden-import community --hidden-import chat_reader --hidden-import quota
           app.py
 
       - name: 실행 시험 (exe 가 뜨고 화면 서버가 응답하는지)

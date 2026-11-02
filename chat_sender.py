@@ -85,8 +85,11 @@ class ConsoleSender(ChatSender):
 
     name = "console"
 
+    def __init__(self, bot_name: str = ""):
+        self.bot_name = bot_name
+
     async def send(self, text: str) -> None:
-        log.info("[dry-run] 채팅 전송 예정: %s", text)
+        log.debug("[dry-run]%s 채팅 전송 예정: %s", f"[{self.bot_name}]" if self.bot_name else "", text)
 
 
 class YouTubeApiSender(ChatSender):
@@ -100,12 +103,15 @@ class YouTubeApiSender(ChatSender):
     name = "youtube-api"
 
     def __init__(self, video: str, client_secret: str = "client_secret.json",
-                 token_path: str = "token.json", timeout: float = 10.0):
+                 token_path: str = "token.json", timeout: float = 10.0, quota=None):
         self.video_id = extract_video_id(video)
         self.client_secret, self.token_path, self.timeout = client_secret, token_path, timeout
         self.creds = None
         self.http = None
         self.live_chat_id: Optional[str] = None
+        self.quota = quota                      # quota.QuotaMeter (선택) — 프로젝트별 하루 사용량 기록
+        from quota import project_key
+        self.project = project_key(client_secret)
 
     async def start(self) -> None:
         import httpx
@@ -115,7 +121,8 @@ class YouTubeApiSender(ChatSender):
         except FileNotFoundError as e:
             raise SendFatal(f"{e} — 먼저 `python chat_sender.py auth` 를 실행하세요") from e
         self.http = httpx.AsyncClient(base_url=API_BASE, timeout=self.timeout)
-        r = await self._request("GET", "/videos", params={"part": "liveStreamingDetails", "id": self.video_id})
+        r = await self._request("GET", "/videos", units=1,
+                                params={"part": "liveStreamingDetails", "id": self.video_id})
         items = r.json().get("items", [])
         chat_id = items[0].get("liveStreamingDetails", {}).get("activeLiveChatId") if items else None
         if not chat_id:
@@ -128,13 +135,15 @@ class YouTubeApiSender(ChatSender):
             await asyncio.to_thread(_refresh_and_save, self.creds, self.token_path)
         return {"Authorization": f"Bearer {self.creds.token}"}
 
-    async def _request(self, method: str, path: str, **kw):
+    async def _request(self, method: str, path: str, units: int = 1, **kw):
         import httpx
         for attempt in range(2):
             try:
                 r = await self.http.request(method, path, headers=await self._auth_header(), **kw)
             except httpx.HTTPError as e:
                 raise SendError(f"네트워크 오류: {type(e).__name__}") from e
+            if self.quota is not None and r.status_code != 401:
+                self.quota.add(self.project, units)
             if r.status_code == 401 and attempt == 0:      # 토큰 만료 직후 → 한 번 갱신 후 재시도
                 await asyncio.to_thread(_refresh_and_save, self.creds, self.token_path)
                 continue
@@ -146,23 +155,32 @@ class YouTubeApiSender(ChatSender):
     async def send(self, text: str) -> None:
         body = {"snippet": {"liveChatId": self.live_chat_id, "type": "textMessageEvent",
                             "textMessageDetails": {"messageText": text}}}
-        await self._request("POST", "/liveChat/messages", params={"part": "snippet"}, json=body)
+        await self._request("POST", "/liveChat/messages", units=50, params={"part": "snippet"}, json=body)
 
     async def close(self) -> None:
         if self.http:
             await self.http.aclose()
 
 
-def fetch_channel_title(client_secret: str, token_path: str) -> str:
-    """로그인된 계정의 유튜브 채널 이름 (UI 표시용, 할당량 1). 동기 함수 — 스레드에서 호출."""
+def fetch_channel_info(client_secret: str, token_path: str, quota=None) -> tuple[str, str]:
+    """로그인된 계정의 (채널 이름, 채널 ID). 할당량 1. 동기 함수 — 스레드에서 호출."""
     import httpx
     creds = load_credentials(client_secret, token_path, interactive=False)
     r = httpx.get(f"{API_BASE}/channels", params={"part": "snippet", "mine": "true"},
                   headers={"Authorization": f"Bearer {creds.token}"}, timeout=10)
+    if quota is not None:
+        from quota import project_key
+        quota.add(project_key(client_secret), 1)
     if not r.is_success:
         raise _classify_error(r)
     items = r.json().get("items") or []
-    return items[0]["snippet"]["title"] if items else "(채널 없음 — 유튜브 채널을 먼저 만드세요)"
+    if not items:
+        return "(채널 없음 — 유튜브 채널을 먼저 만드세요)", ""
+    return items[0]["snippet"]["title"], items[0]["id"]
+
+
+def fetch_channel_title(client_secret: str, token_path: str) -> str:
+    return fetch_channel_info(client_secret, token_path)[0]
 
 
 def _classify_error(r) -> SendError:
@@ -291,9 +309,14 @@ class SafeChatPublisher:
     리액션은 그 순간에만 의미가 있으므로 쿨다운 중인 메시지를 줄 세워 나중에 보내지 않는다.
     """
 
-    def __init__(self, sender: ChatSender, policy: Optional[ChatPolicy] = None):
+    DIRECT_GAP = 2.0           # 직접 전송(명령·이벤트) 사이 최소 간격(초) — 연속 도배 방지
+    DIRECT_MAX_PER_DAY = 150   # 봇 하나의 직접 전송 하루 한도
+
+    def __init__(self, sender: ChatSender, policy: Optional[ChatPolicy] = None, bot_name: str = ""):
         self.sender = sender
         self.policy = policy or ChatPolicy()
+        self.bot_name = bot_name
+        self._tag = f"[{bot_name}] " if bot_name else ""
         # dry-run 은 실제 하루 한도를 소모하지 않도록 별도 파일에 기록
         state = self.policy.state_file + (".dryrun" if sender.name == "console" else "")
         self.daily = DailyCounter(state)
@@ -303,7 +326,9 @@ class SafeChatPublisher:
         self._inflight: Optional[asyncio.Task] = None
         self._lock = asyncio.Lock()               # 리액션·음성 명령 전송이 겹치지 않게 순서대로
         self.enabled = False
-        self.stats = {"offered": 0, "sent": 0, "cooldown": 0, "limit": 0, "duplicate": 0, "busy": 0, "failed": 0}
+        self.stats = {"offered": 0, "sent": 0, "cooldown": 0, "limit": 0, "duplicate": 0, "busy": 0, "failed": 0,
+                      "direct": 0}
+        self.direct_daily = DailyCounter(state + ".direct")
 
     async def start(self) -> bool:
         try:
@@ -313,9 +338,9 @@ class SafeChatPublisher:
             return False
         self.enabled = True
         p = self.policy
-        log.info("채팅 전송 켜짐 [%s] — 쿨다운 %.0f~%.0fs | 방송당 %d건 | 하루 %d건 (오늘 %d건 사용)",
-                 self.sender.name, p.cooldown_min, p.cooldown_max, p.max_per_stream, p.max_per_day,
-                 self.daily.value())
+        log.info("채팅 전송 켜짐 %s[%s] — 표기 '%s' | 리액션 쿨다운 %.0f~%.0fs | 방송당 %d건 | 하루 %d건 (오늘 %d건 사용)",
+                 self._tag, self.sender.name, p.label.strip(), p.cooldown_min, p.cooldown_max,
+                 p.max_per_stream, p.max_per_day, self.daily.value())
         return True
 
     def _format(self, text: str) -> str:
@@ -368,18 +393,26 @@ class SafeChatPublisher:
         self.sent_this_stream += 1
         self.daily.increment()
         self.stats["sent"] += 1
-        log.info("📤 채팅 전송 (%d/%d, 오늘 %d/%d, 다음 전송까지 ≥%.0fs): %s",
+        log.info("📤 %s채팅 전송 (%d/%d, 오늘 %d/%d, 다음 전송까지 ≥%.0fs): %s", self._tag,
                  self.sent_this_stream, self.policy.max_per_stream, self.daily.value(),
                  self.policy.max_per_day, max(0.0, self._next_allowed - time.monotonic()), msg)
 
-    async def send_direct(self, msg: str) -> bool:
-        """스트리머가 직접 지시한 메시지(음성 명령) 전송 — 리액션용 쿨다운·중복 검사 없이 즉시.
-        한도는 호출하는 쪽(commands.CommandRunner)이 별도 카운터로 관리한다."""
+    async def send_direct(self, msg: str, labeled: bool = True) -> bool:
+        """스트리머가 지시했거나(음성 명령) 정해 둔 규칙(이벤트·참여 유도)으로 보내는 메시지.
+        리액션용 랜덤 쿨다운·중복 검사는 없고, 봇 표기·2초 간격·하루 한도는 적용한다."""
         if not self.enabled:
             return False
+        if self.direct_daily.value() >= self.DIRECT_MAX_PER_DAY:
+            log.warning("%s오늘 직접 전송 한도(%d건)에 도달했습니다", self._tag, self.DIRECT_MAX_PER_DAY)
+            return False
+        if labeled and not msg.startswith(self.policy.label):
+            msg = self.policy.label + msg
         try:
             async with self._lock:
                 await self.sender.send(msg[:YT_MAX_LEN])
+                self.direct_daily.increment()
+                self.stats["direct"] += 1
+                await asyncio.sleep(self.DIRECT_GAP)
         except SendFatal as e:
             self.enabled = False
             log.error("채팅 전송 중단: %s", e)
@@ -398,8 +431,9 @@ class SafeChatPublisher:
                 pass
         await self.sender.close()
         s = self.stats
-        log.info("채팅 — 후보 %d | 전송 %d | 쿨다운 %d | 한도 %d | 중복 %d | 실패 %d",
-                 s["offered"], s["sent"], s["cooldown"], s["limit"], s["duplicate"], s["failed"])
+        log.info("채팅 %s— 리액션 후보 %d | 리액션 전송 %d | 쿨다운 %d | 한도 %d | 중복 %d | 실패 %d | 명령·이벤트 전송 %d",
+                 self._tag, s["offered"], s["sent"], s["cooldown"], s["limit"], s["duplicate"], s["failed"],
+                 s["direct"])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
