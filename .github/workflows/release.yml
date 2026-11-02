@@ -1,11 +1,11 @@
-# 버전 태그(v1.2.3)를 올리면 윈도우 서버에서 exe 를 만들어 GitHub 릴리스에 올린다.
-# 앱은 이 릴리스를 보고 자동 업데이트한다 (updater.py).
+# GitHub 릴리스(태그 v1.2.3)를 발행하면 윈도우 서버에서 exe 를 만들어 그 릴리스에 올린다.
+# 앱은 이 릴리스를 보고 자동 업데이트한다 (updater.py). exe 가 올라오기 전까지 앱은 업데이트를 표시하지 않는다.
 name: Release (Windows exe)
 
 on:
-  push:
-    tags: ["v*"]
-  workflow_dispatch:      # 수동 실행: 빌드·시험만 하고 릴리스는 만들지 않음
+  release:
+    types: [published]
+  workflow_dispatch:      # 수동 실행: 빌드·시험만 하고 릴리스에는 올리지 않음
 
 permissions:
   contents: write
