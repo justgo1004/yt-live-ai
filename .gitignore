@@ -1,0 +1,16 @@
+.env
+client_secret*.json
+token.json
+.chat_state.json*
+__pycache__/
+*.txt.log
+chatlog_*.txt
+build/
+dist/
+release/
+*.spec
+logs/
+update/
+*.tmp
+smoke/
+pkg/

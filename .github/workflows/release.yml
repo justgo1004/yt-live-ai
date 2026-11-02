@@ -1,0 +1,98 @@
+# 버전 태그(v1.2.3)를 올리면 윈도우 서버에서 exe 를 만들어 GitHub 릴리스에 올린다.
+# 앱은 이 릴리스를 보고 자동 업데이트한다 (updater.py).
+name: Release (Windows exe)
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:      # 수동 실행: 빌드·시험만 하고 릴리스는 만들지 않음
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 태그 이름으로 버전 기록
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $v = "${{ github.ref_name }}".TrimStart("v")
+          (Get-Content version.py -Raw) -replace '__version__ = ".*"', "__version__ = `"$v`"" | Set-Content version.py -NoNewline
+          Get-Content version.py
+
+      - name: 패키지 설치
+        run: |
+          python -m pip install -U pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: exe 빌드
+        run: >
+          pyinstaller --noconfirm --clean --onefile --windowed --name YouTubeLiveAI
+          --add-data "ui;ui" --collect-submodules deepgram
+          --hidden-import main --hidden-import live_stt --hidden-import reaction --hidden-import chat_sender
+          --hidden-import commands --hidden-import updater --hidden-import version
+          app.py
+
+      - name: 실행 시험 (exe 가 뜨고 화면 서버가 응답하는지)
+        shell: pwsh
+        run: |
+          $env:LIVEAI_NO_BROWSER = "1"; $env:LIVEAI_PORT = "8790"
+          New-Item -ItemType Directory smoke | Out-Null
+          Copy-Item dist\YouTubeLiveAI.exe smoke\
+          $p = Start-Process smoke\YouTubeLiveAI.exe -PassThru -WorkingDirectory smoke
+          $ok = $false
+          for ($i = 0; $i -lt 40; $i++) {
+            Start-Sleep 2
+            try { $r = Invoke-RestMethod http://127.0.0.1:8790/api/state; if ($r.update.current) { $ok = $true; break } } catch {}
+          }
+          try { Invoke-RestMethod -Method Post http://127.0.0.1:8790/api/quit | Out-Null } catch {}
+          Start-Sleep 4
+          if (-not $p.HasExited) { Stop-Process $p -Force }
+          if (-not $ok) { Get-ChildItem smoke\logs -ErrorAction SilentlyContinue | Get-Content; throw "exe 실행 시험 실패" }
+          Write-Host "실행 시험 통과 - 버전 $($r.update.current)"
+
+      - name: ffmpeg 포함 전체 패키지 + 체크섬
+        shell: pwsh
+        run: |
+          $ProgressPreference = "SilentlyContinue"
+          Invoke-WebRequest https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip ffmpeg
+          New-Item -ItemType Directory pkg\YouTubeLiveAI -Force | Out-Null
+          Copy-Item dist\YouTubeLiveAI.exe pkg\YouTubeLiveAI\
+          Get-ChildItem ffmpeg -Recurse -Filter ffmpeg.exe | Select-Object -First 1 | Copy-Item -Destination pkg\YouTubeLiveAI\
+          Compress-Archive pkg\YouTubeLiveAI -DestinationPath YouTubeLiveAI_full.zip
+          $h = (Get-FileHash dist\YouTubeLiveAI.exe -Algorithm SHA256).Hash.ToLower()
+          Set-Content dist\YouTubeLiveAI.exe.sha256 "$h  YouTubeLiveAI.exe" -NoNewline -Encoding ascii
+
+      - name: 릴리스 올리기
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          body_path: RELEASE_NOTES.md
+          files: |
+            dist/YouTubeLiveAI.exe
+            dist/YouTubeLiveAI.exe.sha256
+            YouTubeLiveAI_full.zip
+
+      - name: 시험 빌드 결과 보관 (수동 실행 시)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: YouTubeLiveAI-test
+          path: YouTubeLiveAI_full.zip
+          retention-days: 7
