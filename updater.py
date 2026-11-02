@@ -136,6 +136,10 @@ if errorlevel 1 (
 move /y "update\YouTubeLiveAI.new.exe" "{exe}" >nul 2>nul
 if errorlevel 1 move /y "update\YouTubeLiveAI.old.exe" "{exe}" >nul 2>nul
 :launch
+rem 이전 실행의 PyInstaller 환경 변수를 지우고 새로 시작 (남아 있으면 지워진 임시 폴더를 찾다가 실패)
+for /f "delims==" %%v in ('set _PYI_ 2^>nul') do set "%%v="
+set "_MEIPASS2="
+set "PYINSTALLER_RESET_ENVIRONMENT=1"
 start "" "{exe}" --after-update
 del "%~f0"
 """
@@ -150,4 +154,8 @@ def apply(new_exe: Path, base: Path) -> None:
     bat.write_text(APPLY_BAT.replace("{pid}", str(os.getpid())).replace("{exe}", exe), encoding="utf-8")
     # 숨김 콘솔 + 별도 프로세스 그룹: 앱이 꺼져도 계속 실행되고, 하위 명령(tasklist 등) 창도 뜨지 않음
     flags = 0x00000200 | 0x08000000   # CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
-    subprocess.Popen(["cmd", "/c", str(bat)], cwd=str(base), creationflags=flags, close_fds=True)
+    # PyInstaller 단일 exe 는 임시 폴더(_MEI…) 위치를 환경 변수로 자식에게 넘긴다. 그대로 물려주면
+    # 새 exe 가 '이미 지워진 이전 임시 폴더'를 찾다가 "Failed to load Python DLL" 로 실패하므로 정리한다.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("_PYI_") and k != "_MEIPASS2"}
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    subprocess.Popen(["cmd", "/c", str(bat)], cwd=str(base), creationflags=flags, close_fds=True, env=env)
