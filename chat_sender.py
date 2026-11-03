@@ -217,7 +217,7 @@ def load_credentials(client_secret: str, token_path: str, interactive: bool = Tr
         raise FileNotFoundError(f"OAuth 클라이언트 파일({client_secret})이 없습니다 — README 의 Google Cloud 설정 참고")
     flow = InstalledAppFlow.from_client_secrets_file(client_secret, SCOPES)
     creds = flow.run_local_server(
-        port=0, prompt="consent", timeout_seconds=300,     # 5분 안에 로그인하지 않으면 취소
+        port=0, prompt="consent", timeout_seconds=180,     # 3분 안에 로그인하지 않으면 취소
         success_message="로그인 완료! 이 창을 닫고 라이브 AI 리액션 앱으로 돌아가세요.")
     _save_token(creds, token_path)
     return creds

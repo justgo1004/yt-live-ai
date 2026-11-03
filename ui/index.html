@@ -984,8 +984,14 @@ function botCard(b) {
   };
   $(".blogin", d).onclick = async () => {
     toast(`브라우저가 열립니다. '${b.name}' 에 쓸 봇 계정으로 로그인하고 허용을 누르세요.`);
-    const btn = $(".blogin", d); btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 브라우저에서 로그인 중… (5분 제한)';
-    const r = await api(`/api/bots/${b.id}/login`, {});
+    const btn = $(".blogin", d); btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 브라우저에서 로그인 중… (3분 제한)';
+    let r = await api(`/api/bots/${b.id}/login`, {});
+    if (!r.ok && r.busy) {
+      if (confirm("이전 로그인이 아직 끝나지 않은 상태입니다. 이전 로그인을 취소하고 다시 시작할까요?")) {
+        await api("/api/bots/login/cancel", {});
+        r = await api(`/api/bots/${b.id}/login`, {});
+      }
+    }
     toast(r.ok ? (r.message || `연결되었습니다 — 채널: ${r.channel}`) : r.error, r.ok ? (r.message ? "" : "ok") : "err");
     loadBots();
   };

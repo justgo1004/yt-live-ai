@@ -197,6 +197,7 @@ class AppState:
         self.started_at: Optional[float] = None
         self.counts = {"stt": 0, "reactions": 0}
         self.login_busy = False
+        self.login_gen = 0          # 로그인 시도 번호 — 취소된 이전 시도의 결과를 무시하기 위해
         self.quit = asyncio.Event()
         self.update = {"current": __version__, "latest": None, "available": False, "notes": "", "page": "",
                        "status": "idle", "progress": 0.0, "error": None, "can_install": FROZEN and os.name == "nt"}
@@ -677,17 +678,29 @@ async def h_bot_login(req) -> web.Response:
     if not b.cs_path(BASE).exists():
         return fail("먼저 이 봇의 OAuth 파일을 올려 주세요.")
     if state.login_busy:
-        return fail("다른 로그인 창이 열려 있습니다. 브라우저에서 로그인을 마쳐 주세요.", 409)
+        return fail("이전 로그인을 아직 기다리는 중입니다.", 409, busy=True)
     state.login_busy = True
+    state.login_gen += 1
+    gen = state.login_gen
     tok = BASE / "bots" / b.id / "token.json"
     try:
         tok.parent.mkdir(parents=True, exist_ok=True)
         tok.unlink(missing_ok=True)                            # 다른 계정으로 다시 로그인할 수 있게
         await asyncio.to_thread(chat_sender.load_credentials, str(b.cs_path(BASE)), str(tok), True)
     except Exception as e:
-        return fail(f"로그인에 실패했습니다: {e}")
+        if gen != state.login_gen:
+            return fail("이전 로그인 시도가 취소되었습니다.")
+        msg = str(e)
+        if "access_denied" in msg or "denied" in msg.lower():
+            msg += " — Google Cloud 'OAuth 동의 화면(대상)'의 테스트 사용자에 이 구글 계정 이메일을 추가했는지 확인하세요."
+        elif "timeout" in msg.lower() or "timed out" in msg.lower():
+            msg = "로그인 시간이 지났습니다 (3분). 다시 시도하세요."
+        return fail(f"로그인에 실패했습니다: {msg}")
     finally:
-        state.login_busy = False
+        if gen == state.login_gen:
+            state.login_busy = False
+    if gen != state.login_gen:
+        return fail("이전 로그인 시도가 취소되었습니다.")
     reg = load_registry()
     b = reg.get(b.id)
     b.token = f"bots/{b.id}/token.json"
@@ -701,6 +714,13 @@ async def h_bot_login(req) -> web.Response:
         return ok(channel=b.channel_title, message=f"주의: {', '.join(others)} 와(과) 같은 유튜브 계정입니다. "
                                                    "역할별로 다른 이름을 보이려면 봇마다 다른 계정으로 로그인하세요.")
     return ok(channel=b.channel_title)
+
+
+async def h_login_cancel(_req) -> web.Response:
+    """끝나지 않은 로그인 대기를 취소 (구글 차단 화면 등으로 결과가 돌아오지 않았을 때)."""
+    state.login_gen += 1
+    state.login_busy = False
+    return ok(message="이전 로그인을 취소했습니다.")
 
 
 async def h_bot_logout(req) -> web.Response:
@@ -1037,7 +1057,7 @@ async def serve() -> None:
         web.get("/", h_index), web.get("/api/ping", h_ping), web.get("/api/state", h_state),
         web.get("/api/settings", h_get_settings), web.post("/api/settings", h_save_settings),
         web.post("/api/start", h_start), web.post("/api/stop", h_stop),
-        web.get("/api/bots", h_bots), web.post("/api/bots", h_bots_save), web.post("/api/bots/add", h_bot_add),
+        web.get("/api/bots", h_bots), web.post("/api/bots/login/cancel", h_login_cancel), web.post("/api/bots", h_bots_save), web.post("/api/bots/add", h_bot_add),
         web.post("/api/bots/{bot_id}/delete", h_bot_delete), web.post("/api/bots/{bot_id}/secret", h_bot_secret),
         web.post("/api/bots/{bot_id}/login", h_bot_login), web.post("/api/bots/{bot_id}/logout", h_bot_logout),
         web.post("/api/bots/{bot_id}/test", h_bot_test),
